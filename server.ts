@@ -10,8 +10,10 @@ import ws from 'ws';
 // Configure Neon serverless driver to use WebSockets (Port 443) instead of TCP Port 5432
 neonConfig.webSocketConstructor = ws;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Universal fallback supporting both ESM (tsx dev) and CommonJS (dist/server.cjs production)
+const __filename = typeof __filename === 'string' ? __filename : fileURLToPath(import.meta.url);
+const __dirname = typeof __dirname === 'string' ? __dirname : path.dirname(__filename);
+
 const ROOT = process.cwd();
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -86,6 +88,13 @@ let restarts = 0;
 
 function startPythonBackend() {
   const scriptPath = path.resolve(__dirname, 'backend', 'app.py');
+  
+  // If the Python script doesn't exist (e.g. lightweight Node-only deployment on Render), skip spawning safely
+  if (!existsSync(scriptPath)) {
+    console.log('Python backend script not found at path; running in Node-only gateway mode.');
+    return null;
+  }
+
   const venvPythonPath = path.resolve(
     __dirname,
     '.venv',
@@ -95,10 +104,11 @@ function startPythonBackend() {
   const pythonExecutable = existsSync(venvPythonPath)
     ? venvPythonPath
     : process.platform === 'win32' ? 'python' : 'python3';
+    
   const child = spawn(pythonExecutable, [scriptPath], {
     cwd: __dirname,
     env: {
-      ...process.env, // LUGHA_DATABASE_URL is passed through to the Python backend too
+      ...process.env, 
       PYTHON_HOST,
       PYTHON_PORT: String(PYTHON_PORT),
       PYTHONUNBUFFERED: '1',
@@ -110,7 +120,7 @@ function startPythonBackend() {
     if (shuttingDown) return;
     if (++restarts > 5) {
       console.error('Python backend keeps failing; giving up.');
-      process.exit(1);
+      return;
     }
     console.error(`Python backend exited with code ${code}; restart ${restarts}/5 in 2s...`);
     setTimeout(() => {
@@ -121,7 +131,12 @@ function startPythonBackend() {
   return child;
 }
 
-function waitForPythonBackend(timeoutMs = 8000): Promise<void> {
+function waitForPythonBackend(timeoutMs = 3000): Promise<void> {
+  const scriptPath = path.resolve(__dirname, 'backend', 'app.py');
+  if (!existsSync(scriptPath)) {
+    return Promise.resolve(); // Skip waiting if no Python backend is configured
+  }
+
   const startedAt = Date.now();
   return new Promise((resolve) => {
     const check = () => {

@@ -4,12 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --platform=node --bundle --format=cjs --outdir=dist --packages=external",
-    "start": "NODE_ENV=production node dist/server.js",
-    "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+  "dev": "tsx server.ts",
+  "build": "vite build && esbuild server.ts --platform=node --bundle --format=cjs --outfile=dist/server.cjs --packages=external",
+  "start": "NODE_ENV=production node dist/server.cjs",
+  "preview": "vite preview",
+  "clean": "rm -rf dist server.js",
+  "lint": "tsc --noEmit"
+
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.1",
