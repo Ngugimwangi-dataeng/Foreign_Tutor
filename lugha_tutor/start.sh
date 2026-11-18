@@ -23,7 +23,5 @@ python manage.py seed_lughasmart
 
 echo ""
 echo "Starting LughaSmart on http://127.0.0.1:8000"
-echo "  Tutor Login:   tutor   / LughaTutor2026!"
-echo "  Student Login: student / LughaStudent2026!"
 echo ""
 python manage.py runserver 0.0.0.0:8000

@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 from decimal import Decimal
 
@@ -14,33 +15,43 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         User = get_user_model()
 
-        tutor, created_tutor = User.objects.get_or_create(
-            username="tutor",
-            defaults={
-                "email": "amina.wambui@lughasmart.ac.ke",
-                "first_name": "Amina",
-                "last_name": "Wambui",
-                "is_staff": True,
-                "is_superuser": False,
-            },
-        )
-        if created_tutor:
-            tutor.set_password("LughaTutor2026!")
+        tutor_username = os.getenv("SEED_TUTOR_USERNAME", "").strip()
+        tutor_password = os.getenv("SEED_TUTOR_PASSWORD", "")
+        tutor_email = os.getenv("SEED_TUTOR_EMAIL", "").strip()
+        student_username = os.getenv("SEED_STUDENT_USERNAME", "").strip()
+        student_password = os.getenv("SEED_STUDENT_PASSWORD", "")
+        student_email = os.getenv("SEED_STUDENT_EMAIL", "").strip()
+
+        tutor = None
+        if tutor_username and tutor_password and tutor_email:
+            tutor, _ = User.objects.get_or_create(
+                username=tutor_username,
+                defaults={"email": tutor_email, "is_staff": True, "is_superuser": False},
+            )
+            tutor.email = tutor_email
+            tutor.is_staff = True
+            tutor.set_password(tutor_password)
             tutor.save()
 
-        student, created_student = User.objects.get_or_create(
-            username="student",
-            defaults={
-                "email": "john.miller@example.com",
-                "first_name": "John",
-                "last_name": "Miller",
-                "is_staff": False,
-                "is_superuser": False,
-            },
-        )
-        if created_student:
-            student.set_password("LughaStudent2026!")
+        student = None
+        if student_username and student_password and student_email:
+            student, _ = User.objects.get_or_create(
+                username=student_username,
+                defaults={"email": student_email, "is_staff": False, "is_superuser": False},
+            )
+            student.email = student_email
+            student.is_staff = False
+            student.set_password(student_password)
             student.save()
+
+        if tutor is None:
+            tutor = User.objects.filter(is_staff=True).first()
+
+        if tutor is None:
+            self.stdout.write(
+                self.style.WARNING("No staff tutor account exists; configure SEED_TUTOR_* variables before seeding courses.")
+            )
+            return
 
         seed_courses = [
             {
@@ -121,7 +132,7 @@ class Command(BaseCommand):
                 },
             )
 
-        if first_course is not None:
+        if first_course is not None and student is not None and tutor is not None:
             Enrollment.objects.get_or_create(
                 student=student,
                 course=first_course,
@@ -148,6 +159,6 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                "LughaSmart seeded! Demo Tutor: tutor / LughaTutor2026! | Demo Student: student / LughaStudent2026!"
+                "LughaSmart seeded."
             )
         )

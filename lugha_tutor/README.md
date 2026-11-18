@@ -33,9 +33,7 @@ chmod +x start.sh
 ./start.sh
 ```
 
-`start.sh` automatically creates `.venv`, installs dependencies, runs Django migrations, seeds 6 Kenyan language courses + demo accounts, and starts the server at `http://127.0.0.1:8000`:
-- **Tutor Account (`is_staff=True`)**: `tutor` / `LughaTutor2026!`
-- **Student Account (`is_staff=False`)**: `student` / `LughaStudent2026!`
+`start.sh` automatically creates `.venv`, installs dependencies, runs Django migrations, seeds 6 Kenyan language courses, and starts the server at `http://127.0.0.1:8000`. Create tutor and student accounts through Django or the configured registration workflow; never commit account passwords.
 
 ## Existing SQLite Data
 

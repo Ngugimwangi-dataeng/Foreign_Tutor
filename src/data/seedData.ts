@@ -274,7 +274,7 @@ export const SEED_MATERIALS: SharedMaterial[] = [
     description:
       'Complete 24-page printable PDF with noun classes (M-WA, KI-VI), verb tenses, and real-world Nairobi dialogues.',
     fileName: 'Kiswahili_Adult_Immersion_Workbook.pdf',
-    mediaUrl: '/public/assets/aistudio/LughaSmart_System_Design___Proposal__3__c33dc71a.pdf',
+    mediaUrl: '/public/assets/curriculum/LughaSmart_System_Design___Proposal.pdf',
     tutorUid: 'tutor-amina-01',
     tutorName: 'Dr. Amina Wambui',
     createdAt: '2026-11-09',
@@ -288,7 +288,7 @@ export const SEED_MATERIALS: SharedMaterial[] = [
     description:
       'Structured German A1 study PDF covering articles (der/die/das), everyday verbs, and station dialogues.',
     fileName: 'Deutsch_A1_Practical_Grammar_Workbook.pdf',
-    mediaUrl: '/public/assets/aistudio/LughaSmart_System_Design___Proposal__3__c33dc71a.pdf',
+    mediaUrl: '/public/assets/curriculum/LughaSmart_System_Design___Proposal.pdf',
     tutorUid: 'tutor-amina-01',
     tutorName: 'Lukas Weber',
     createdAt: '2026-11-08',

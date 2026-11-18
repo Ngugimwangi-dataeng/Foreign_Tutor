@@ -316,7 +316,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         matType === 'audio'
           ? matDesc.trim() || matTitle.trim()
           : matUrl.trim() ||
-            '/public/assets/aistudio/LughaSmart_System_Design___Proposal__3__c33dc71a.pdf',
+            '/public/assets/curriculum/LughaSmart_System_Design___Proposal.pdf',
       durationLabel: matType === 'audio' ? '08:30 min' : undefined,
       tutorUid: currentUser.uid,
       tutorName: currentUser.fullName,

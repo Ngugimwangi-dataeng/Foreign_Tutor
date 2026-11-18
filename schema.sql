@@ -250,14 +250,8 @@ GROUP BY DATE(enrolled_at AT TIME ZONE 'Africa/Nairobi')
 ORDER BY transaction_date DESC;
 
 -- ============================================================================
--- SEED SAMPLE TUTOR, STUDENT & COURSES (IDEMPOTENT)
+-- SEED SAMPLE COURSES (IDEMPOTENT)
 -- ============================================================================
-INSERT INTO users (uid, full_name, email, password_hash, role, is_admin, admin_pin_hash, country_code)
-VALUES
-    ('tutor-amina-01', 'Dr. Amina Wambui', 'amina.wambui@lughasmart.ac.ke', 'scrypt$replace_with_real_hash', 'tutor', TRUE, 'scrypt$replace_with_pin_hash', 'KE'),
-    ('demo-student-1', 'John Miller', 'john.miller@example.com', 'scrypt$replace_with_real_hash', 'student', FALSE, NULL, 'US')
-ON CONFLICT (email) DO NOTHING;
-
 INSERT INTO courses (
     id, title, language_name, category, audience, session_duration_minutes,
     description, level, per_session_price_kes, monthly_pass_price_kes,

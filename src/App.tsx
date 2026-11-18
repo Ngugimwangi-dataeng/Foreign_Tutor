@@ -34,30 +34,6 @@ import { TutorAdminGate } from './components/TutorAdminGate';
 import { CheckoutModal } from './components/CheckoutModal';
 import { AuthModal } from './components/AuthModal';
 
-const INITIAL_USERS: UserProfile[] = [
-  {
-    uid: 'demo-student-1',
-    fullName: 'John Miller',
-    email: 'john.miller@example.com',
-    password: 'password123',
-    role: 'student',
-    isAdmin: false,
-    isSuspended: false,
-    createdAt: '2026-11-01',
-  },
-  {
-    uid: 'tutor-amina-01',
-    fullName: 'Dr. Amina Wambui',
-    email: 'amina.wambui@lughasmart.ac.ke',
-    password: 'password123',
-    role: 'tutor',
-    isAdmin: true,
-    isSuspended: false,
-    adminPin: '202688',
-    createdAt: '2026-01-15',
-  },
-];
-
 const INITIAL_AUDIT_LOGS: SecurityAuditLog[] = [
   {
     id: 'audit-init-1',
@@ -111,7 +87,7 @@ function isTutorAdminUrl(): boolean {
 }
 
 export default function App() {
-  const [registeredUsers, setRegisteredUsers] = useState<UserProfile[]>(INITIAL_USERS);
+  const [registeredUsers, setRegisteredUsers] = useState<UserProfile[]>([]);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [activeView, setActiveView] = useState<'landing' | 'enrollment' | 'tutor' | 'tutor_gate'>(
     () => (isTutorAdminUrl() ? 'tutor_gate' : 'landing')
@@ -712,7 +688,6 @@ export default function App() {
         {activeView === 'tutor_gate' && (
           <TutorAdminGate
             currentUser={currentUser}
-            registeredUsers={registeredUsers}
             onAdminLoginSuccess={handleAdminLoginSuccess}
             onLogSecurityEvent={({ actorEmail, actorRole, action, httpStatus, details }) =>
               appendAuditLog({
@@ -725,6 +700,7 @@ export default function App() {
               })
             }
             onBackToLanding={clearAdminHashAndGoLanding}
+            onOpenLogin={() => setShowAuthModal(true)}
           />
         )}
 

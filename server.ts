@@ -42,7 +42,7 @@ export const pool = new Pool({
 });
 
 // Prevents the process from crashing when an idle client errors out
-pool.on('error', (err) => {
+pool.on('error', (err: Error) => {
   console.error('Unexpected PostgreSQL pool error:', err.message);
 });
 
