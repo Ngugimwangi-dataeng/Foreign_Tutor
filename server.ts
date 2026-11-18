@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import { createServer as createViteServer } from 'vite';
 import { existsSync } from 'fs';
 import http from 'http';
 import path from 'path';
@@ -13,10 +12,12 @@ neonConfig.webSocketConstructor = ws;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ROOT = process.cwd();
+const PORT = Number(process.env.PORT) || 3000;
 
 for (const envFile of [
-  path.resolve(__dirname, 'lugha_tutor', '.env'),
-  path.resolve(__dirname, '.env'),
+  path.resolve(ROOT, 'lugha_tutor', '.env'),
+  path.resolve(ROOT, '.env'),
 ]) {
   if (existsSync(envFile)) {
     process.loadEnvFile(envFile);
@@ -81,6 +82,7 @@ async function initializeDatabase() {
 // ---------------------------------------------------------------------------
 let pythonProcess: ChildProcess | null = null;
 let shuttingDown = false;
+let restarts = 0;
 
 function startPythonBackend() {
   const scriptPath = path.resolve(__dirname, 'backend', 'app.py');
@@ -105,12 +107,15 @@ function startPythonBackend() {
   });
 
   child.on('exit', (code) => {
-    if (!shuttingDown) {
-      console.error(`Python backend exited with code ${code}; restarting in 1s...`);
-      setTimeout(() => {
-        pythonProcess = startPythonBackend();
-      }, 1000);
+    if (shuttingDown) return;
+    if (++restarts > 5) {
+      console.error('Python backend keeps failing; giving up.');
+      process.exit(1);
     }
+    console.error(`Python backend exited with code ${code}; restart ${restarts}/5 in 2s...`);
+    setTimeout(() => {
+      pythonProcess = startPythonBackend();
+    }, 2000);
   });
 
   return child;
@@ -211,7 +216,6 @@ async function startServer() {
   });
 
   const app = express();
-  const PORT = 3000;
 
   // Serve attached proposal PDF & static public files
   app.use('/public', express.static(path.resolve(__dirname, 'public')));
@@ -245,6 +249,7 @@ async function startServer() {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
