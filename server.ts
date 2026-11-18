@@ -259,17 +259,18 @@ async function startServer() {
   app.use('/api', proxyToPython);
 
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    // In production, server.cjs compiles into dist/ directly, so static files are right in __dirname
+    app.use(express.static(__dirname));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.resolve(__dirname, 'index.html'));
     });
   } else {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    // In local development (tsx server.ts), static assets are served via Vite middleware from dist/
+    const distPath = path.resolve(__dirname, 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.resolve(distPath, 'index.html'));
     });
-    app.use(vite.middlewares);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
