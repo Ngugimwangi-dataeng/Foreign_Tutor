@@ -6,7 +6,6 @@ import { spawn, ChildProcess } from 'child_process';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
 
-// Configure Neon serverless driver to use WebSockets (Port 443) instead of TCP Port 5432
 neonConfig.webSocketConstructor = ws;
 
 const ROOT = process.cwd();
@@ -23,6 +22,9 @@ for (const envFile of [
 
 const PYTHON_HOST = '127.0.0.1';
 const PYTHON_PORT = Number(process.env.PYTHON_PORT) || 8765;
+const DJANGO_HOST = '127.0.0.1';
+const DJANGO_PORT = Number(process.env.DJANGO_PORT) || 8000;
+const ADMIN_URL_PREFIX = '/' + (process.env.ADMIN_URL_PATH || 'secure-faculty-admin-9f3a').replace(/^\/+|\/+$/g, '');
 
 // ---------------------------------------------------------------------------
 // PostgreSQL (Neon Cloud via WebSockets / Port 443)
@@ -34,12 +36,11 @@ if (!process.env.LUGHA_DATABASE_URL) {
 
 export const pool = new Pool({
   connectionString: process.env.LUGHA_DATABASE_URL,
-  max: 10,                        // max clients in the pool
-  idleTimeoutMillis: 30000,      // close idle clients after 30s
-  connectionTimeoutMillis: 15000, // allow 15s for Neon cold start
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 15000,
 });
 
-// Prevents the process from crashing when an idle client errors out
 pool.on('error', (err: Error) => {
   console.error('Unexpected PostgreSQL pool error:', err.message);
 });
@@ -75,35 +76,35 @@ async function initializeDatabase() {
 }
 
 // ---------------------------------------------------------------------------
-// Python backend management
+// Python API backend (app.py) & Django Tutor/Admin backend (lugha_tutor)
 // ---------------------------------------------------------------------------
 let pythonProcess: ChildProcess | null = null;
+let djangoProcess: ChildProcess | null = null;
 let shuttingDown = false;
-let restarts = 0;
+let pythonRestarts = 0;
+let djangoRestarts = 0;
 
-function getPythonScriptPath(): string {
-  return path.resolve(ROOT, 'backend', 'app.py');
+function resolvePythonExecutable(): string {
+  for (const base of [ROOT, path.resolve(ROOT, 'lugha_tutor')]) {
+    const venvPython = path.resolve(
+      base,
+      '.venv',
+      process.platform === 'win32' ? 'Scripts' : 'bin',
+      process.platform === 'win32' ? 'python.exe' : 'python',
+    );
+    if (existsSync(venvPython)) return venvPython;
+  }
+  return process.platform === 'win32' ? 'python' : 'python3';
 }
 
 function startPythonBackend() {
-  const scriptPath = getPythonScriptPath();
-
+  const scriptPath = path.resolve(ROOT, 'backend', 'app.py');
   if (!existsSync(scriptPath)) {
-    console.log('Python backend script not found at path; running in Node-only gateway mode.');
+    console.log('Python backend script not found at path; skipping.');
     return null;
   }
 
-  const venvPythonPath = path.resolve(
-    ROOT,
-    '.venv',
-    process.platform === 'win32' ? 'Scripts' : 'bin',
-    process.platform === 'win32' ? 'python.exe' : 'python'
-  );
-  const pythonExecutable = existsSync(venvPythonPath)
-    ? venvPythonPath
-    : process.platform === 'win32' ? 'python' : 'python3';
-
-  const child = spawn(pythonExecutable, [scriptPath], {
+  const child = spawn(resolvePythonExecutable(), [scriptPath], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -116,11 +117,11 @@ function startPythonBackend() {
 
   child.on('exit', (code) => {
     if (shuttingDown) return;
-    if (++restarts > 5) {
+    if (++pythonRestarts > 5) {
       console.error('Python backend keeps failing; giving up.');
       return;
     }
-    console.error(`Python backend exited with code ${code}; restart ${restarts}/5 in 2s...`);
+    console.error(`Python backend exited with code ${code}; restart ${pythonRestarts}/5 in 2s...`);
     setTimeout(() => {
       pythonProcess = startPythonBackend();
     }, 2000);
@@ -129,31 +130,63 @@ function startPythonBackend() {
   return child;
 }
 
-function waitForPythonBackend(timeoutMs = 5000): Promise<void> {
-  const scriptPath = getPythonScriptPath();
-  if (!existsSync(scriptPath)) {
-    return Promise.resolve();
+function startDjangoBackend() {
+  const djangoDir = path.resolve(ROOT, 'lugha_tutor');
+  if (!existsSync(path.resolve(djangoDir, 'manage.py'))) {
+    console.log('Django tutor project not found; skipping.');
+    return null;
   }
 
+  const child = spawn(
+    resolvePythonExecutable(),
+    [
+      '-m',
+      'gunicorn',
+      'config.wsgi:application',
+      '--bind',
+      `${DJANGO_HOST}:${DJANGO_PORT}`,
+      '--workers',
+      '1',
+      '--threads',
+      '4',
+    ],
+    {
+      cwd: djangoDir,
+      env: {
+        ...process.env,
+        DATABASE_URL: process.env.DATABASE_URL || process.env.LUGHA_DATABASE_URL,
+        PYTHONUNBUFFERED: '1',
+      },
+      stdio: 'inherit',
+    },
+  );
+
+  child.on('exit', (code) => {
+    if (shuttingDown) return;
+    if (++djangoRestarts > 5) {
+      console.error('Django tutor backend keeps failing; giving up.');
+      return;
+    }
+    console.error(`Django tutor backend exited with code ${code}; restart ${djangoRestarts}/5 in 2s...`);
+    setTimeout(() => {
+      djangoProcess = startDjangoBackend();
+    }, 2000);
+  });
+
+  return child;
+}
+
+function waitForPort(host: string, port: number, checkPath: string, timeoutMs = 6000): Promise<void> {
   const startedAt = Date.now();
   return new Promise((resolve) => {
     const check = () => {
-      const req = http.get(
-        { hostname: PYTHON_HOST, port: PYTHON_PORT, path: '/api/health', timeout: 500 },
-        (res) => {
-          res.resume();
-          if (res.statusCode && res.statusCode < 500) {
-            resolve();
-          } else if (Date.now() - startedAt < timeoutMs) {
-            setTimeout(check, 150);
-          } else {
-            resolve();
-          }
-        }
-      );
+      const req = http.get({ hostname: host, port, path: checkPath, timeout: 500 }, (res) => {
+        res.resume();
+        resolve();
+      });
       req.on('error', () => {
         if (Date.now() - startedAt < timeoutMs) {
-          setTimeout(check, 150);
+          setTimeout(check, 200);
         } else {
           resolve();
         }
@@ -163,39 +196,44 @@ function waitForPythonBackend(timeoutMs = 5000): Promise<void> {
   });
 }
 
-function proxyToPython(req: Request, res: Response) {
-  const proxyReq = http.request(
-    {
-      hostname: PYTHON_HOST,
-      port: PYTHON_PORT,
-      path: req.originalUrl,
-      method: req.method,
-      headers: {
-        ...req.headers,
-        host: `${PYTHON_HOST}:${PYTHON_PORT}`,
+function proxyRequest(targetHost: string, targetPort: number, preserveOriginalHost = false) {
+  return (req: Request, res: Response) => {
+    const headers: http.OutgoingHttpHeaders = {
+      ...req.headers,
+      host: preserveOriginalHost && req.headers.host ? req.headers.host : `${targetHost}:${targetPort}`,
+      'x-forwarded-proto': (req.headers['x-forwarded-proto'] as string) || 'https',
+    };
+
+    const proxyReq = http.request(
+      {
+        hostname: targetHost,
+        port: targetPort,
+        path: req.originalUrl,
+        method: req.method,
+        headers,
       },
-    },
-    (proxyRes) => {
-      res.status(proxyRes.statusCode || 502);
-      Object.entries(proxyRes.headers).forEach(([key, value]) => {
-        if (value !== undefined) {
-          res.setHeader(key, value);
-        }
-      });
-      proxyRes.pipe(res);
-    }
-  );
+      (proxyRes) => {
+        res.status(proxyRes.statusCode || 502);
+        Object.entries(proxyRes.headers).forEach(([key, value]) => {
+          if (value !== undefined) {
+            res.setHeader(key, value);
+          }
+        });
+        proxyRes.pipe(res);
+      },
+    );
 
-  proxyReq.on('error', (err) => {
-    if (!res.headersSent) {
-      res.status(502).json({
-        error: 'Python backend unavailable',
-        detail: err.message,
-      });
-    }
-  });
+    proxyReq.on('error', (err) => {
+      if (!res.headersSent) {
+        res.status(502).json({
+          error: 'Upstream backend unavailable',
+          detail: err.message,
+        });
+      }
+    });
 
-  req.pipe(proxyReq);
+    req.pipe(proxyReq);
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -206,13 +244,17 @@ async function startServer() {
   await initializeDatabase();
 
   pythonProcess = startPythonBackend();
-  await waitForPythonBackend();
+  djangoProcess = startDjangoBackend();
+
+  await Promise.all([
+    waitForPort(PYTHON_HOST, PYTHON_PORT, '/api/health'),
+    waitForPort(DJANGO_HOST, DJANGO_PORT, '/accounts/login/'),
+  ]);
 
   const cleanup = async () => {
     shuttingDown = true;
-    if (pythonProcess && !pythonProcess.killed) {
-      pythonProcess.kill('SIGTERM');
-    }
+    if (pythonProcess && !pythonProcess.killed) pythonProcess.kill('SIGTERM');
+    if (djangoProcess && !djangoProcess.killed) djangoProcess.kill('SIGTERM');
     try {
       await pool.end();
     } catch (err) {
@@ -230,10 +272,8 @@ async function startServer() {
 
   const app = express();
 
-  // Serve attached proposal PDF & static public files from repo root
   app.use('/public', express.static(path.resolve(ROOT, 'public')));
 
-  // Node-side database health check (handled here, before the Python proxy)
   app.get('/api/db-health', async (_req, res) => {
     try {
       const { rows } = await pool.query('SELECT NOW() AS now');
@@ -253,9 +293,14 @@ async function startServer() {
     }
   });
 
-  // Forward all other /api/* traffic to the pure-Python backend server
-  app.use('/api', proxyToPython);
+  // 1. Main Python API
+  app.use('/api', proxyRequest(PYTHON_HOST, PYTHON_PORT, false));
 
+  // 2. Private Django Tutor & Admin routes (not linked on the landing page)
+  const djangoProxy = proxyRequest(DJANGO_HOST, DJANGO_PORT, true);
+  app.use(['/tutor', '/accounts/login', '/accounts/logout', '/static', ADMIN_URL_PREFIX], djangoProxy);
+
+  // 3. Public Landing Page & Student Frontend (unchanged)
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(ROOT, 'dist');
     app.use(express.static(distDir));
@@ -272,7 +317,9 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Frontend gateway listening on http://0.0.0.0:${PORT} -> Python backend on ${PYTHON_HOST}:${PYTHON_PORT}`);
+    console.log(
+      `Gateway listening on http://0.0.0.0:${PORT} -> Python API (${PYTHON_PORT}) & Django Tutor (${DJANGO_PORT})`,
+    );
   });
 }
 
