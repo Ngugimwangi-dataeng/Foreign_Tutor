@@ -3,16 +3,11 @@ import { existsSync } from 'fs';
 import http from 'http';
 import path from 'path';
 import { spawn, ChildProcess } from 'child_process';
-import { fileURLToPath } from 'url';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
 
 // Configure Neon serverless driver to use WebSockets (Port 443) instead of TCP Port 5432
 neonConfig.webSocketConstructor = ws;
-
-// Universal fallback supporting both ESM (tsx dev) and CommonJS (dist/server.cjs production)
-const __filename = typeof __filename === 'string' ? __filename : fileURLToPath(import.meta.url);
-const __dirname = typeof __dirname === 'string' ? __dirname : path.dirname(__filename);
 
 const ROOT = process.cwd();
 const PORT = Number(process.env.PORT) || 3000;
@@ -86,17 +81,20 @@ let pythonProcess: ChildProcess | null = null;
 let shuttingDown = false;
 let restarts = 0;
 
+function getPythonScriptPath(): string {
+  return path.resolve(ROOT, 'backend', 'app.py');
+}
+
 function startPythonBackend() {
-  const scriptPath = path.resolve(__dirname, 'backend', 'app.py');
-  
-  // If the Python script doesn't exist (e.g. lightweight Node-only deployment on Render), skip spawning safely
+  const scriptPath = getPythonScriptPath();
+
   if (!existsSync(scriptPath)) {
     console.log('Python backend script not found at path; running in Node-only gateway mode.');
     return null;
   }
 
   const venvPythonPath = path.resolve(
-    __dirname,
+    ROOT,
     '.venv',
     process.platform === 'win32' ? 'Scripts' : 'bin',
     process.platform === 'win32' ? 'python.exe' : 'python'
@@ -104,11 +102,11 @@ function startPythonBackend() {
   const pythonExecutable = existsSync(venvPythonPath)
     ? venvPythonPath
     : process.platform === 'win32' ? 'python' : 'python3';
-    
+
   const child = spawn(pythonExecutable, [scriptPath], {
-    cwd: __dirname,
+    cwd: ROOT,
     env: {
-      ...process.env, 
+      ...process.env,
       PYTHON_HOST,
       PYTHON_PORT: String(PYTHON_PORT),
       PYTHONUNBUFFERED: '1',
@@ -131,10 +129,10 @@ function startPythonBackend() {
   return child;
 }
 
-function waitForPythonBackend(timeoutMs = 3000): Promise<void> {
-  const scriptPath = path.resolve(__dirname, 'backend', 'app.py');
+function waitForPythonBackend(timeoutMs = 5000): Promise<void> {
+  const scriptPath = getPythonScriptPath();
   if (!existsSync(scriptPath)) {
-    return Promise.resolve(); // Skip waiting if no Python backend is configured
+    return Promise.resolve();
   }
 
   const startedAt = Date.now();
@@ -216,7 +214,7 @@ async function startServer() {
       pythonProcess.kill('SIGTERM');
     }
     try {
-      await pool.end(); // drain and close all DB connections
+      await pool.end();
     } catch (err) {
       console.error('Error closing PostgreSQL pool:', (err as Error).message);
     }
@@ -232,8 +230,8 @@ async function startServer() {
 
   const app = express();
 
-  // Serve attached proposal PDF & static public files
-  app.use('/public', express.static(path.resolve(__dirname, 'public')));
+  // Serve attached proposal PDF & static public files from repo root
+  app.use('/public', express.static(path.resolve(ROOT, 'public')));
 
   // Node-side database health check (handled here, before the Python proxy)
   app.get('/api/db-health', async (_req, res) => {
@@ -259,18 +257,18 @@ async function startServer() {
   app.use('/api', proxyToPython);
 
   if (process.env.NODE_ENV === 'production') {
-    // In production, server.cjs compiles into dist/ directly, so static files are right in __dirname
-    app.use(express.static(__dirname));
+    const distDir = path.resolve(ROOT, 'dist');
+    app.use(express.static(distDir));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'index.html'));
+      res.sendFile(path.resolve(distDir, 'index.html'));
     });
   } else {
-    // In local development (tsx server.ts), static assets are served via Vite middleware from dist/
-    const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
     });
+    app.use(vite.middlewares);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
