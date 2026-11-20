@@ -118,7 +118,7 @@ STORAGES = {
 # Piracy-protected media directory strictly outside public static/media URLs
 PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
 
-LOGIN_URL = "login"
+LOGIN_URL = "academy:login"
 LOGIN_REDIRECT_URL = "academy:home"
 LOGOUT_REDIRECT_URL = "academy:home"
 
@@ -142,3 +142,20 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
