@@ -24,7 +24,8 @@ const PYTHON_HOST = '127.0.0.1';
 const PYTHON_PORT = Number(process.env.PYTHON_PORT) || 8765;
 const DJANGO_HOST = '127.0.0.1';
 const DJANGO_PORT = Number(process.env.DJANGO_PORT) || 8000;
-const ADMIN_URL_PREFIX = '/' + (process.env.ADMIN_URL_PATH || 'secure-faculty-admin-9f3a').replace(/^\/+|\/+$/g, '');
+const ADMIN_URL_PREFIX =
+  '/' + (process.env.ADMIN_URL_PATH || 'secure-faculty-admin-9f3a').replace(/^\/+|\/+$/g, '');
 
 // ---------------------------------------------------------------------------
 // PostgreSQL (Neon Cloud via WebSockets / Port 443)
@@ -149,6 +150,11 @@ function startDjangoBackend() {
       '1',
       '--threads',
       '4',
+      '--access-logfile',
+      '-',
+      '--error-logfile',
+      '-',
+      '--capture-output',
     ],
     {
       cwd: djangoDir,
@@ -200,7 +206,10 @@ function proxyRequest(targetHost: string, targetPort: number, preserveOriginalHo
   return (req: Request, res: Response) => {
     const headers: http.OutgoingHttpHeaders = {
       ...req.headers,
-      host: preserveOriginalHost && req.headers.host ? req.headers.host : `${targetHost}:${targetPort}`,
+      host:
+        preserveOriginalHost && req.headers.host
+          ? req.headers.host
+          : `${targetHost}:${targetPort}`,
       'x-forwarded-proto': (req.headers['x-forwarded-proto'] as string) || 'https',
     };
 
@@ -298,7 +307,10 @@ async function startServer() {
 
   // 2. Private Django Tutor & Admin routes (not linked on the landing page)
   const djangoProxy = proxyRequest(DJANGO_HOST, DJANGO_PORT, true);
-  app.use(['/tutor', '/accounts/login', '/accounts/logout', '/static', ADMIN_URL_PREFIX], djangoProxy);
+  app.use(
+    ['/tutor', '/accounts/login', '/accounts/logout', '/static', ADMIN_URL_PREFIX],
+    djangoProxy,
+  );
 
   // 3. Public Landing Page & Student Frontend (unchanged)
   if (process.env.NODE_ENV === 'production') {
