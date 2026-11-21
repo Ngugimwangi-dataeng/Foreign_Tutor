@@ -85,7 +85,6 @@ class LessonUploadForm(forms.ModelForm):
             "summary",
             "audio_file",
             "pdf_notes",
-            "is_preview",
         ]
 
 
