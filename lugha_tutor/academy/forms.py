@@ -5,7 +5,12 @@ import hmac
 
 from django import forms
 from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import UserCreationForm
 from django.db import connection
+
+from .models import Lesson, LiveSession
+
+User = get_user_model()
 
 
 def _verify_shared_user_secret(raw_secret: str, stored_hash: str) -> bool:
@@ -41,6 +46,62 @@ def _verify_shared_user_secret(raw_secret: str, stored_hash: str) -> bool:
     except (ValueError, binascii.Error):
         return False
     return False
+
+
+class StudentRegistrationForm(UserCreationForm):
+    email = forms.EmailField(required=True)
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ("username", "email", "first_name", "last_name")
+
+    def clean_email(self):
+        email = (self.cleaned_data.get("email") or "").strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email already exists.")
+        return email
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.email = self.cleaned_data["email"]
+        user.first_name = self.cleaned_data.get("first_name", "").strip()
+        user.last_name = self.cleaned_data.get("last_name", "").strip()
+        user.is_staff = False
+        user.is_superuser = False
+        if commit:
+            user.save()
+        return user
+
+
+class LessonUploadForm(forms.ModelForm):
+    class Meta:
+        model = Lesson
+        fields = [
+            "course",
+            "title",
+            "order",
+            "summary",
+            "audio_file",
+            "pdf_notes",
+            "is_preview",
+        ]
+
+
+class LiveSessionForm(forms.ModelForm):
+    class Meta:
+        model = LiveSession
+        fields = [
+            "course",
+            "title",
+            "scheduled_at",
+            "meeting_url",
+            "is_live_now",
+        ]
+        widgets = {
+            "scheduled_at": forms.DateTimeInput(attrs={"type": "datetime-local"}),
+        }
 
 
 class TutorAdminSecretLoginForm(forms.Form):
@@ -101,17 +162,16 @@ class TutorAdminSecretLoginForm(forms.Form):
         ):
             raise forms.ValidationError("Invalid email, password, or secret key.")
 
-        UserModel = get_user_model()
-        django_user = UserModel.objects.filter(email__iexact=db_email).first()
+        django_user = User.objects.filter(email__iexact=db_email).first()
         if django_user is None:
             base_username = db_email.split("@", 1)[0][:140]
             username = base_username
             suffix = 1
-            while UserModel.objects.filter(username=username).exists():
+            while User.objects.filter(username=username).exists():
                 username = f"{base_username}_{suffix}"
                 suffix += 1
             name_parts = (full_name or "").strip().split(None, 1)
-            django_user = UserModel.objects.create_user(
+            django_user = User.objects.create_user(
                 username=username,
                 email=db_email,
                 password=password,
