@@ -34,6 +34,14 @@ import { TutorAdminGate } from './components/TutorAdminGate';
 import { CheckoutModal } from './components/CheckoutModal';
 import { AuthModal } from './components/AuthModal';
 
+import heroBannerImg from './assets/images/lughasmart_hero_banner_1794473845041.jpg';
+import childrenWordGameImg from './assets/images/children_word_game_learning_1794674777766.jpg';
+import culturalBridgeImg from './assets/images/kenyan_foreign_cultural_bridge_1794674777306.jpg';
+import maasaiCultureImg from './assets/images/kenya_maasai_culture_1794473845063.jpg';
+import swahiliCoastalImg from './assets/images/swahili_coastal_lamu_1794473845839.jpg';
+import nairobiMarketImg from './assets/images/nairobi_market_visual_lesson_1794674778595.jpg';
+import tutorAminaAvatarImg from './assets/images/tutor_amina_avatar_1794473845671.jpg';
+
 const INITIAL_AUDIT_LOGS: SecurityAuditLog[] = [
   {
     id: 'audit-init-1',
@@ -86,6 +94,46 @@ function isTutorAdminUrl(): boolean {
   );
 }
 
+const BUNDLED_IMAGE_BY_FILENAME: Record<string, string> = {
+  'lughasmart_hero_banner_1794473845041.jpg': heroBannerImg,
+  'children_word_game_learning_1794674777766.jpg': childrenWordGameImg,
+  'kenyan_foreign_cultural_bridge_1794674777306.jpg': culturalBridgeImg,
+  'kenya_maasai_culture_1794473845063.jpg': maasaiCultureImg,
+  'swahili_coastal_lamu_1794473845839.jpg': swahiliCoastalImg,
+  'nairobi_market_visual_lesson_1794674778595.jpg': nairobiMarketImg,
+  'tutor_amina_avatar_1794473845671.jpg': tutorAminaAvatarImg,
+};
+
+function resolveCourseImageUrl(
+  rawDbUrl: string,
+  fallbackSeedUrl: string,
+  audience: 'adult' | 'children'
+): string {
+  const defaultImg = audience === 'children' ? childrenWordGameImg : culturalBridgeImg;
+  const candidate = (rawDbUrl || fallbackSeedUrl || '').trim();
+
+  if (!candidate) return defaultImg;
+  if (
+    candidate.startsWith('http://') ||
+    candidate.startsWith('https://') ||
+    candidate.startsWith('data:')
+  ) {
+    return candidate;
+  }
+
+  const fileName = candidate.split('/').pop()?.split('?')[0] || '';
+  if (fileName && BUNDLED_IMAGE_BY_FILENAME[fileName]) {
+    return BUNDLED_IMAGE_BY_FILENAME[fileName];
+  }
+
+  // If DB has a relative path that Vite won't serve in dist/, fall back to bundled asset
+  if (candidate.startsWith('/src/') || candidate.startsWith('src/')) {
+    return defaultImg;
+  }
+
+  return candidate.startsWith('/') ? candidate : `/${candidate}`;
+}
+
 function mapApiCourse(raw: Record<string, unknown>, fallback?: Course): Course {
   const perSession = Number(
     raw.per_session_price_kes ?? raw.perSessionPriceKes ?? fallback?.perSessionPriceKes ?? 1500
@@ -101,27 +149,18 @@ function mapApiCourse(raw: Record<string, unknown>, fallback?: Course): Course {
   );
   const courseId = String(raw.id ?? fallback?.id ?? '');
 
+  const audience: 'adult' | 'children' = raw.audience === 'children' ? 'children' : 'adult';
   const rawFromDb = raw.image_url ?? raw.imageUrl;
   const dbUrl = typeof rawFromDb === 'string' ? rawFromDb.trim() : '';
   const seedUrl = typeof fallback?.imageUrl === 'string' ? fallback.imageUrl.trim() : '';
-  let resolvedImageUrl: string = dbUrl || seedUrl || '';
-
-  if (
-    resolvedImageUrl &&
-    !resolvedImageUrl.startsWith('http://') &&
-    !resolvedImageUrl.startsWith('https://') &&
-    !resolvedImageUrl.startsWith('data:') &&
-    !resolvedImageUrl.startsWith('/')
-  ) {
-    resolvedImageUrl = `/${resolvedImageUrl}`;
-  }
+  const resolvedImageUrl = resolveCourseImageUrl(dbUrl, seedUrl, audience);
 
   return {
     id: courseId,
     title: String(raw.title ?? fallback?.title ?? ''),
     languageName: String(raw.language_name ?? raw.languageName ?? fallback?.languageName ?? ''),
     category: raw.category === 'foreign' ? 'foreign' : 'kenyan',
-    audience: raw.audience === 'children' ? 'children' : 'adult',
+    audience,
     sessionDurationMinutes: durationMinutes === 60 ? 60 : 180,
     description: String(raw.description ?? fallback?.description ?? ''),
     level: String(raw.level ?? fallback?.level ?? 'Beginner to Intermediate'),

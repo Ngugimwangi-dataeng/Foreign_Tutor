@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
 import { Course, TutorRating } from '../types';
+import heroBannerImg from '../assets/images/lughasmart_hero_banner_1794473845041.jpg';
+import childrenWordGameImg from '../assets/images/children_word_game_learning_1794674777766.jpg';
+import culturalBridgeImg from '../assets/images/kenyan_foreign_cultural_bridge_1794674777306.jpg';
+import maasaiCultureImg from '../assets/images/kenya_maasai_culture_1794473845063.jpg';
+import swahiliCoastalImg from '../assets/images/swahili_coastal_lamu_1794473845839.jpg';
+import tutorAminaAvatarImg from '../assets/images/tutor_amina_avatar_1794473845671.jpg';
 import {
   ArrowRight,
   Clock,
@@ -109,7 +115,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="lg:col-span-5 bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden flex flex-col">
             <div className="relative flex-1 min-h-[300px] bg-[#F3F2EE]">
               <img
-                src="/src/assets/images/lughasmart_hero_banner_1794473845041.jpg"
+                src={heroBannerImg}
                 alt="Kenyan language tutor teaching in a sunlit Nairobi studio"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
@@ -206,7 +212,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
             <div className="rounded-xl overflow-hidden border border-[#E5E3DC] h-44 bg-[#F3F2EE]">
               <img
-                src="/src/assets/images/children_word_game_learning_1794674777766.jpg"
+                src={childrenWordGameImg}
                 alt="Wooden alphabet blocks and animal picture flashcards for children language sessions"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
@@ -261,9 +267,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div>
                 <div className="aspect-[16/10] bg-[#F3F2EE] overflow-hidden border-b border-[#E5E3DC]">
                   <img
-                    src={course.imageUrl}
+                    src={
+                      course.imageUrl ||
+                      (course.audience === 'children' ? childrenWordGameImg : culturalBridgeImg)
+                    }
                     alt={`${course.languageName} cultural learning visual`}
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const fallback =
+                        course.audience === 'children' ? childrenWordGameImg : culturalBridgeImg;
+                      // Compare via a flag: img.src is absolute, fallback is a relative path,
+                      // so a direct comparison never matches and could loop on repeated errors.
+                      if (e.currentTarget.dataset.fallbackApplied !== 'true') {
+                        e.currentTarget.dataset.fallbackApplied = 'true';
+                        e.currentTarget.src = fallback;
+                      }
+                    }}
                     className="w-full h-full object-cover"
                   />
                 </div>
@@ -333,7 +352,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden">
             <div className="aspect-[4/3] bg-[#F3F2EE]">
               <img
-                src="/src/assets/images/kenyan_foreign_cultural_bridge_1794674777306.jpg"
+                src={culturalBridgeImg}
                 alt="Kenyan beadwork, coastal dhows, and collaborative seminar study"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
@@ -350,7 +369,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden">
             <div className="aspect-[4/3] bg-[#F3F2EE]">
               <img
-                src="/src/assets/images/kenya_maasai_culture_1794473845063.jpg"
+                src={maasaiCultureImg}
                 alt="Maasai cultural heritage in the Great Rift Valley"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
@@ -367,7 +386,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden">
             <div className="aspect-[4/3] bg-[#F3F2EE]">
               <img
-                src="/src/assets/images/swahili_coastal_lamu_1794473845839.jpg"
+                src={swahiliCoastalImg}
                 alt="Historic Swahili coastal architecture in Lamu"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
@@ -389,7 +408,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-[#E5E3DC]">
             <div className="flex items-center gap-5">
               <img
-                src="/src/assets/images/tutor_amina_avatar_1794473845671.jpg"
+                src={tutorAminaAvatarImg}
                 alt="Dr. Amina Wambui, Lead Language Tutor"
                 referrerPolicy="no-referrer"
                 className="w-16 h-16 rounded-2xl object-cover border border-[#E5E3DC]"

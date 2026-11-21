@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from 'react';
+import childrenWordGameImg from '../assets/images/children_word_game_learning_1794674777766.jpg';
+import nairobiMarketImg from '../assets/images/nairobi_market_visual_lesson_1794674778595.jpg';
 import { speakPhrase, playAudioChime } from '../utils/audio';
 import { Volume2, RotateCcw, Trophy, Sparkles } from 'lucide-react';
 
@@ -49,7 +51,9 @@ export const WordGame: React.FC<WordGameProps> = ({ onSaveScore }) => {
   const [matchedIds, setMatchedIds] = useState<string[]>([]);
   const [attempts, setAttempts] = useState(0);
   const [score, setScore] = useState(0);
-  const [feedback, setFeedback] = useState<string>('Pick a word on the left, then match its English meaning on the right.');
+  const [feedback, setFeedback] = useState<string>(
+    'Pick a word on the left, then match its English meaning on the right.'
+  );
 
   const pairs = WORD_SETS[selectedLang];
 
@@ -96,29 +100,46 @@ export const WordGame: React.FC<WordGameProps> = ({ onSaveScore }) => {
   };
 
   const completed = matchedIds.length === pairs.length;
+  const bannerImg =
+    selectedLang === 'Kiswahili (Swahili)' ? nairobiMarketImg : childrenWordGameImg;
 
   return (
     <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 sm:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="text-xs font-semibold text-[#B45309]">Children’s 1-Hour Session Activity</div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center pb-5 border-b border-[#E5E3DC]">
+        <div className="lg:col-span-8 space-y-2">
+          <div className="text-xs font-semibold text-[#B45309]">
+            Children’s 1-Hour Session Activity
+          </div>
           <h3 className="font-display text-2xl font-semibold text-[#18181B]">
-            Interactive Word & Picture Match Game
+            Interactive Word &amp; Picture Match Game
           </h3>
-          <p className="text-xs text-[#52525B] mt-1">{feedback}</p>
+          <p className="text-xs text-[#52525B]">{feedback}</p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="px-3.5 py-2 rounded-xl bg-[#F3F2EE] border border-[#E5E3DC] text-xs font-mono tabular-nums">
-            Score: <strong className="text-[#0F6B4B]">{score}</strong> · {matchedIds.length}/{pairs.length}
+        <div className="lg:col-span-4 flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3">
+          <img
+            src={bannerImg}
+            alt="Interactive word and vocabulary learning board"
+            onError={(e) => {
+              if (e.currentTarget.src !== childrenWordGameImg) {
+                e.currentTarget.src = childrenWordGameImg;
+              }
+            }}
+            className="w-full sm:w-40 h-20 object-cover rounded-xl border border-[#E5E3DC]"
+          />
+          <div className="flex items-center gap-2">
+            <div className="px-3.5 py-2 rounded-xl bg-[#F3F2EE] border border-[#E5E3DC] text-xs font-mono tabular-nums">
+              Score: <strong className="text-[#0F6B4B]">{score}</strong> · {matchedIds.length}/
+              {pairs.length}
+            </div>
+            <button
+              onClick={() => handleReset()}
+              className="px-3 py-2 rounded-xl border border-[#E5E3DC] hover:bg-[#F3F2EE] text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset</span>
+            </button>
           </div>
-          <button
-            onClick={() => handleReset()}
-            className="px-3 py-2 rounded-xl border border-[#E5E3DC] hover:bg-[#F3F2EE] text-xs font-medium flex items-center gap-1.5 cursor-pointer"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset</span>
-          </button>
         </div>
       </div>
 
@@ -140,7 +161,9 @@ export const WordGame: React.FC<WordGameProps> = ({ onSaveScore }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-3">
-          <div className="text-xs font-semibold text-[#71717A]">1. Tap a {selectedLang} Word (with Audio)</div>
+          <div className="text-xs font-semibold text-[#71717A]">
+            1. Tap a {selectedLang} Word (with Audio)
+          </div>
           {pairs.map((pair) => {
             const isMatched = matchedIds.includes(pair.id);
             const isSelected = selectedTarget === pair.id;
@@ -194,7 +217,9 @@ export const WordGame: React.FC<WordGameProps> = ({ onSaveScore }) => {
         <div className="p-4 rounded-xl bg-[#0F6B4B]/10 border border-[#0F6B4B]/30 flex items-center justify-between text-xs text-[#0F6B4B]">
           <div className="flex items-center gap-2 font-semibold">
             <Trophy className="w-4 h-4" />
-            <span>Round Complete! Score: {score} pts in {attempts} attempts — saved to your progress.</span>
+            <span>
+              Round Complete! Score: {score} pts in {attempts} attempts — saved to your progress.
+            </span>
           </div>
           <button
             onClick={() => handleReset()}

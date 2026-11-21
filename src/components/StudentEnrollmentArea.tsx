@@ -11,6 +11,13 @@ import {
   DailyLiveSession,
   ClassEmailNotification,
 } from '../types';
+import nairobiMarketImg from '../assets/images/nairobi_market_visual_lesson_1794674778595.jpg';
+import childrenWordGameImg from '../assets/images/children_word_game_learning_1794674777766.jpg';
+import swahiliCoastalImg from '../assets/images/swahili_coastal_lamu_1794473845839.jpg';
+import maasaiCultureImg from '../assets/images/kenya_maasai_culture_1794473845063.jpg';
+import culturalBridgeImg from '../assets/images/kenyan_foreign_cultural_bridge_1794674777306.jpg';
+import heroBannerImg from '../assets/images/lughasmart_hero_banner_1794473845041.jpg';
+import tutorAminaAvatarImg from '../assets/images/tutor_amina_avatar_1794473845671.jpg';
 import { WordGame } from './WordGame';
 import { speakPhrase, playAudioChime } from '../utils/audio';
 import {
@@ -30,6 +37,33 @@ import {
   Mail,
   Calendar,
 } from 'lucide-react';
+
+const MATERIAL_IMAGE_BY_FILENAME: Record<string, string> = {
+  'tutor_amina_avatar_1794473845671.jpg': tutorAminaAvatarImg,
+  'swahili_coastal_lamu_1794473845839.jpg': swahiliCoastalImg,
+  'nairobi_market_visual_lesson_1794674778595.jpg': nairobiMarketImg,
+  'lughasmart_hero_banner_1794473845041.jpg': heroBannerImg,
+  'kenyan_foreign_cultural_bridge_1794674777306.jpg': culturalBridgeImg,
+  'kenya_maasai_culture_1794473845063.jpg': maasaiCultureImg,
+  'children_word_game_learning_1794674777766.jpg': childrenWordGameImg,
+};
+
+function resolveSharedImageSrc(mediaUrl: string): string {
+  const cleaned = (mediaUrl || '').trim();
+  if (
+    cleaned.startsWith('data:') ||
+    cleaned.startsWith('http://') ||
+    cleaned.startsWith('https://') ||
+    cleaned.startsWith('/assets/')
+  ) {
+    return cleaned;
+  }
+  const fileName = cleaned.split('/').pop()?.split('?')[0] || '';
+  if (fileName && MATERIAL_IMAGE_BY_FILENAME[fileName]) {
+    return MATERIAL_IMAGE_BY_FILENAME[fileName];
+  }
+  return nairobiMarketImg;
+}
 
 interface StudentEnrollmentAreaProps {
   currentUser: UserProfile;
@@ -465,28 +499,36 @@ export const StudentEnrollmentArea: React.FC<StudentEnrollmentAreaProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {sharedImages.map((img) => (
-                    <div
-                      key={img.id}
-                      className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden flex flex-col justify-between"
-                    >
-                      <div className="aspect-[4/3] bg-[#F3F2EE] border-b border-[#E5E3DC]">
-                        <img
-                          src={img.mediaUrl}
-                          alt={img.title}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      <div className="p-5 space-y-2">
-                        <div className="text-[11px] font-semibold text-[#0F6B4B]">
-                          {img.languageName} · Shared by {img.tutorName}
+                  {sharedImages.map((img) => {
+                    const resolvedSrc = resolveSharedImageSrc(img.mediaUrl);
+                    return (
+                      <div
+                        key={img.id}
+                        className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden flex flex-col justify-between"
+                      >
+                        <div className="aspect-[4/3] bg-[#F3F2EE] border-b border-[#E5E3DC]">
+                          <img
+                            src={resolvedSrc}
+                            alt={img.title}
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              if (e.currentTarget.src !== nairobiMarketImg) {
+                                e.currentTarget.src = nairobiMarketImg;
+                              }
+                            }}
+                            className="w-full h-full object-cover"
+                          />
                         </div>
-                        <h3 className="text-sm font-semibold text-[#18181B]">{img.title}</h3>
-                        <p className="text-xs text-[#52525B] leading-relaxed">{img.description}</p>
+                        <div className="p-5 space-y-2">
+                          <div className="text-[11px] font-semibold text-[#0F6B4B]">
+                            {img.languageName} · Shared by {img.tutorName}
+                          </div>
+                          <h3 className="text-sm font-semibold text-[#18181B]">{img.title}</h3>
+                          <p className="text-xs text-[#52525B] leading-relaxed">{img.description}</p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
