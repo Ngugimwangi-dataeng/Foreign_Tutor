@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Course,
   Enrollment,
@@ -89,28 +89,43 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     'students' | 'live_schedule' | 'reports' | 'materials' | 'tests' | 'feedback' | 'admin_security'
   >('students');
 
-  // Daily Live Session Form
+  // Map courses & users by ID so schema-normalized lookups stay consistent
+  const courseById = useMemo(() => {
+    const map = new Map<string, Course>();
+    courses.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [courses]);
+
+  const userById = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    users.forEach((u) => map.set(u.uid, u));
+    return map;
+  }, [users]);
+
+  const defaultCourseId = courses[0]?.id || 'swahili-adult-101';
+
+  // Daily Live Session Form (matches live_sessions in schema.sql)
   const todayStr = new Date().toISOString().slice(0, 10);
-  const [sessCourseId, setSessCourseId] = useState(courses[0]?.id || 'swahili-adult-101');
+  const [sessCourseId, setSessCourseId] = useState(defaultCourseId);
   const [sessDate, setSessDate] = useState(todayStr);
   const [sessStart, setSessStart] = useState('18:00 EAT');
   const [sessEnd, setSessEnd] = useState('21:00 EAT');
   const [sessTopic, setSessTopic] = useState('');
   const [sessNotice, setSessNotice] = useState<string | null>(null);
 
-  // Email Student Class-Time Update Modal/Panel
+  // Email Student Class-Time Update Panel (matches class_email_notifications in schema.sql)
   const [emailTarget, setEmailTarget] = useState<Enrollment | 'all_course' | null>(null);
-  const [emailCourseId, setEmailCourseId] = useState(courses[0]?.id || 'swahili-adult-101');
+  const [emailCourseId, setEmailCourseId] = useState(defaultCourseId);
   const [emailSubject, setEmailSubject] = useState('');
   const [emailClassTime, setEmailClassTime] = useState(`${todayStr} · 18:00 - 21:00 EAT`);
   const [emailBody, setEmailBody] = useState('');
   const [emailSentBanner, setEmailSentBanner] = useState<string | null>(null);
 
-  // Daily Transaction Reports Date Filter
-  const [reportDateFilter, setReportDateFilter] = useState<string>(todayStr);
+  // Daily Transaction Reports Date Filter (aligns with daily_transaction_summary & enrollments)
+  const [reportDateFilter, setReportDateFilter] = useState<string>('all');
 
-  // Material Sharing Form (Images / PDFs / Audio)
-  const [matCourseId, setMatCourseId] = useState(courses[0]?.id || 'swahili-adult-101');
+  // Material Sharing Form (matches shared_materials: pdf | audio | image)
+  const [matCourseId, setMatCourseId] = useState(defaultCourseId);
   const [matType, setMatType] = useState<'image' | 'pdf' | 'audio'>('image');
   const [matTitle, setMatTitle] = useState('');
   const [matDesc, setMatDesc] = useState('');
@@ -120,8 +135,8 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const [matFileName, setMatFileName] = useState('visual_explanation_card.jpg');
   const [matNotice, setMatNotice] = useState<string | null>(null);
 
-  // Test Creation Form
-  const [testCourseId, setTestCourseId] = useState(courses[0]?.id || 'swahili-adult-101');
+  // Test Creation Form (matches tests + test_questions in schema.sql)
+  const [testCourseId, setTestCourseId] = useState(defaultCourseId);
   const [testTitle, setTestTitle] = useState('');
   const [qPrompt, setQPrompt] = useState('');
   const [optA, setOptA] = useState('');
@@ -130,10 +145,10 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const [correctIdx, setCorrectIdx] = useState(0);
   const [testNotice, setTestNotice] = useState<string | null>(null);
 
-  // Audio feedback input
+  // Audio feedback input (matches audio_submissions.tutor_feedback)
   const [audioNotes, setAudioNotes] = useState<Record<string, string>>({});
 
-  // Admin: Provision new Tutor/Admin state
+  // Admin: Provision new Tutor/Admin state (matches users with role='tutor' and is_admin=TRUE)
   const [newTutorName, setNewTutorName] = useState('');
   const [newTutorEmail, setNewTutorEmail] = useState('');
   const [newTutorPass, setNewTutorPass] = useState('');
@@ -162,9 +177,56 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     );
   }
 
+  const resolveCourseForId = (id: string): Course =>
+    courseById.get(id) ||
+    courses[0] || {
+      id: 'swahili-adult-101',
+      title: 'Conversational Kiswahili for Professionals & Expats',
+      languageName: 'Kiswahili (Swahili)',
+      category: 'kenyan',
+      audience: 'adult',
+      sessionDurationMinutes: 180,
+      description: '',
+      level: 'Beginner to Intermediate',
+      perSessionPriceKes: 1500,
+      monthlyPassPriceKes: 9600,
+      jitsiRoomName: 'LughaSmart-Kiswahili-Adult-3Hr',
+      pdfTitle: 'Kiswahili_Adult_Immersion_Workbook.pdf',
+      tutorName: currentUser.fullName,
+      lessonsCount: 12,
+      modules: [],
+    };
+
+  const handleVerifyEnrollmentAction = async (
+    enrollmentId: string,
+    status: 'completed' | 'revoked'
+  ) => {
+    onVerifyEnrollment(enrollmentId, status);
+    try {
+      await fetch('/api/tutor/verify-payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-role': 'tutor',
+          'x-user-email': currentUser.email,
+        },
+        body: JSON.stringify({
+          enrollment_id: enrollmentId,
+          action: status === 'completed' ? 'verify' : 'revoke',
+          notes:
+            status === 'completed'
+              ? 'Payment verified in TutorWorkspace.'
+              : 'Access revoked in TutorWorkspace.',
+        }),
+      });
+    } catch {
+      // Fallback gracefully when running offline or without API server
+    }
+  };
+
   const handleCreateLiveSession = (e: React.FormEvent) => {
     e.preventDefault();
-    const course = courses.find((c) => c.id === sessCourseId) || courses[0];
+    const course = resolveCourseForId(sessCourseId);
     onAddOrUpdateLiveSession({
       courseId: course.id,
       languageName: course.languageName,
@@ -175,7 +237,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
       topic: sessTopic.trim() || `${course.languageName} Daily Live Class`,
       jitsiRoomUrl: `https://meet.jit.si/${course.jitsiRoomName}`,
       status: 'scheduled',
-      tutorName: currentUser.fullName,
+      tutorName: course.tutorName || currentUser.fullName,
     });
     setSessTopic('');
     playAudioChime('success');
@@ -186,16 +248,20 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const openEmailComposer = (target: Enrollment | 'all_course') => {
     setEmailTarget(target);
     if (target === 'all_course') {
-      const c = courses.find((x) => x.id === emailCourseId) || courses[0];
+      const c = resolveCourseForId(emailCourseId);
       setEmailSubject(`Class Time Update: ${c.languageName} Live Jitsi Session`);
       setEmailBody(
         `Hello! Your ${c.languageName} live session will be held at ${emailClassTime} via Jitsi: https://meet.jit.si/${c.jitsiRoomName}`
       );
     } else {
+      const c = resolveCourseForId(target.courseId);
+      const student = userById.get(target.studentUid);
+      const studentName = student?.fullName || target.studentName;
+      const jitsiUrl = target.jitsiRoomUrl || `https://meet.jit.si/${c.jitsiRoomName}`;
       setEmailCourseId(target.courseId);
-      setEmailSubject(`Class Time Update for ${target.languageName}`);
+      setEmailSubject(`Class Time Update for ${c.languageName}`);
       setEmailBody(
-        `Hello ${target.studentName}, your ${target.languageName} live session is scheduled for ${emailClassTime}. Join on Jitsi: ${target.jitsiRoomUrl}`
+        `Hello ${studentName}, your ${c.languageName} live session is scheduled for ${emailClassTime}. Join on Jitsi: ${jitsiUrl}`
       );
     }
   };
@@ -208,13 +274,14 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
       const recipients = enrollments.filter(
         (enr) => enr.courseId === emailCourseId && enr.paymentStatus === 'completed'
       );
-      const course = courses.find((c) => c.id === emailCourseId) || courses[0];
+      const course = resolveCourseForId(emailCourseId);
       recipients.forEach((enr) => {
+        const student = userById.get(enr.studentUid);
         onSendClassEmail({
           courseId: course.id,
           languageName: course.languageName,
-          recipientEmail: enr.studentEmail,
-          recipientName: enr.studentName,
+          recipientEmail: student?.email || enr.studentEmail,
+          recipientName: student?.fullName || enr.studentName,
           subject: emailSubject.trim(),
           messageBody: emailBody.trim(),
           classTimeInfo: emailClassTime.trim(),
@@ -223,17 +290,23 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
       });
       setEmailSentBanner(`Sent class time email update to ${recipients.length} enrolled student(s).`);
     } else {
+      const course = resolveCourseForId(emailTarget.courseId);
+      const student = userById.get(emailTarget.studentUid);
       onSendClassEmail({
-        courseId: emailTarget.courseId,
-        languageName: emailTarget.languageName,
-        recipientEmail: emailTarget.studentEmail,
-        recipientName: emailTarget.studentName,
+        courseId: course.id,
+        languageName: course.languageName,
+        recipientEmail: student?.email || emailTarget.studentEmail,
+        recipientName: student?.fullName || emailTarget.studentName,
         subject: emailSubject.trim(),
         messageBody: emailBody.trim(),
         classTimeInfo: emailClassTime.trim(),
         sentByName: currentUser.fullName,
       });
-      setEmailSentBanner(`Class time email sent to ${emailTarget.studentName} (${emailTarget.studentEmail}).`);
+      setEmailSentBanner(
+        `Class time email sent to ${student?.fullName || emailTarget.studentName} (${
+          student?.email || emailTarget.studentEmail
+        }).`
+      );
     }
 
     setEmailTarget(null);
@@ -241,18 +314,18 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     setTimeout(() => setEmailSentBanner(null), 4000);
   };
 
-  // Daily Transaction Report calculations
+  // Daily Transaction Report calculations (aligns with completed enrollments in KES)
   const filteredTransactions = enrollments.filter((e) =>
     reportDateFilter === 'all' ? true : e.enrolledAt.startsWith(reportDateFilter)
   );
   const completedTx = filteredTransactions.filter((e) => e.paymentStatus === 'completed');
-  const totalRevenueKes = completedTx.reduce((sum, e) => sum + e.amountKes, 0);
+  const totalRevenueKes = completedTx.reduce((sum, e) => sum + Number(e.amountKes || 0), 0);
   const mpesaTotalKes = completedTx
     .filter((e) => e.paymentMethod === 'mpesa')
-    .reduce((sum, e) => sum + e.amountKes, 0);
+    .reduce((sum, e) => sum + Number(e.amountKes || 0), 0);
   const visaTotalKes = completedTx
     .filter((e) => e.paymentMethod === 'visa')
-    .reduce((sum, e) => sum + e.amountKes, 0);
+    .reduce((sum, e) => sum + Number(e.amountKes || 0), 0);
 
   const handleExportCsv = () => {
     const header = [
@@ -266,17 +339,21 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
       'AmountKES',
       'Status',
     ];
-    const rows = filteredTransactions.map((e) => [
-      e.enrolledAt,
-      e.transactionRef,
-      `"${e.studentName}"`,
-      e.studentEmail,
-      `"${e.languageName}"`,
-      e.planType,
-      e.paymentMethod,
-      String(e.amountKes),
-      e.paymentStatus,
-    ]);
+    const rows = filteredTransactions.map((e) => {
+      const student = userById.get(e.studentUid);
+      const course = resolveCourseForId(e.courseId);
+      return [
+        e.enrolledAt,
+        e.transactionRef,
+        `"${(student?.fullName || e.studentName).replace(/"/g, '""')}"`,
+        student?.email || e.studentEmail,
+        `"${(course.languageName || e.languageName).replace(/"/g, '""')}"`,
+        e.planType,
+        e.paymentMethod,
+        String(e.amountKes),
+        e.paymentStatus,
+      ];
+    });
     const csv = [header.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -300,10 +377,16 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handlePublishMaterial = (e: React.FormEvent) => {
+  const handlePublishMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!matTitle.trim()) return;
-    const course = courses.find((c) => c.id === matCourseId) || courses[0];
+    const course = resolveCourseForId(matCourseId);
+    const finalFileName = matFileName.trim() || `${matType}_resource`;
+    const finalMediaUrl =
+      matType === 'audio'
+        ? matDesc.trim() || matTitle.trim()
+        : matUrl.trim() ||
+          '/public/assets/curriculum/LughaSmart_System_Design___Proposal.pdf';
 
     onAddMaterial({
       courseId: course.id,
@@ -311,16 +394,32 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
       materialType: matType,
       title: matTitle.trim(),
       description: matDesc.trim() || `Shared for ${course.languageName} learners.`,
-      fileName: matFileName.trim() || `${matType}_resource`,
-      mediaUrl:
-        matType === 'audio'
-          ? matDesc.trim() || matTitle.trim()
-          : matUrl.trim() ||
-            '/public/assets/curriculum/LughaSmart_System_Design___Proposal.pdf',
+      fileName: finalFileName,
+      mediaUrl: finalMediaUrl,
       durationLabel: matType === 'audio' ? '08:30 min' : undefined,
       tutorUid: currentUser.uid,
       tutorName: currentUser.fullName,
     });
+
+    if (matType === 'pdf') {
+      try {
+        await fetch('/api/tutor/curriculum/update-pdf', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-role': 'tutor',
+            'x-user-email': currentUser.email,
+          },
+          body: JSON.stringify({
+            course_id: course.id,
+            pdf_name: finalFileName,
+            notes: matDesc.trim() || matTitle.trim(),
+          }),
+        });
+      } catch {
+        // Fallback gracefully when running offline or without API server
+      }
+    }
 
     setMatTitle('');
     setMatDesc('');
@@ -332,7 +431,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const handlePublishTest = (e: React.FormEvent) => {
     e.preventDefault();
     if (!testTitle.trim() || !qPrompt.trim() || !optA.trim() || !optB.trim()) return;
-    const course = courses.find((c) => c.id === testCourseId) || courses[0];
+    const course = resolveCourseForId(testCourseId);
     const options = [optA.trim(), optB.trim(), optC.trim()].filter(Boolean);
 
     onCreateTest({
@@ -360,6 +459,27 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     playAudioChime('success');
     setTestNotice(`Test published to ${course.languageName} students.`);
     setTimeout(() => setTestNotice(null), 3500);
+  };
+
+  const handleSaveAudioFeedback = async (submissionId: string, feedback: string) => {
+    onFeedbackAudio(submissionId, feedback);
+    playAudioChime('success');
+    try {
+      await fetch('/api/tutor/audio-feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-role': 'tutor',
+          'x-user-email': currentUser.email,
+        },
+        body: JSON.stringify({
+          submission_id: submissionId,
+          feedback_text: feedback,
+        }),
+      });
+    } catch {
+      // Fallback gracefully when running offline or without API server
+    }
   };
 
   return (
@@ -391,7 +511,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             </div>
           </div>
           <div>
-            <div className="text-[#71717A]">Today’s Revenue</div>
+            <div className="text-[#71717A]">Completed Revenue</div>
             <div className="font-mono text-2xl font-semibold text-[#18181B] tabular-nums">
               KES {totalRevenueKes.toLocaleString()}
             </div>
@@ -483,22 +603,26 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                 </thead>
                 <tbody className="divide-y divide-[#E5E3DC]">
                   {enrollments.map((enr) => {
-                    const course = courses.find((c) => c.id === enr.courseId);
-                    const totalMods = course?.modules.length || enr.totalModules;
-                    const covered = enr.completedModuleIds.length;
+                    const course = resolveCourseForId(enr.courseId);
+                    const student = userById.get(enr.studentUid);
+                    const studentName = student?.fullName || enr.studentName;
+                    const studentEmail = student?.email || enr.studentEmail;
+                    const totalMods = Math.max(1, course.modules?.length || enr.totalModules || 4);
+                    const covered = enr.completedModuleIds?.length ?? enr.modulesCompletedCount ?? 0;
+                    const jitsiUrl = enr.jitsiRoomUrl || `https://meet.jit.si/${course.jitsiRoomName}`;
                     return (
                       <tr key={enr.id}>
                         <td className="py-4 px-4">
-                          <div className="font-semibold text-[#18181B]">{enr.studentName}</div>
-                          <div className="font-mono text-[11px] text-[#52525B]">{enr.studentEmail}</div>
+                          <div className="font-semibold text-[#18181B]">{studentName}</div>
+                          <div className="font-mono text-[11px] text-[#52525B]">{studentEmail}</div>
                           <div className="text-[11px] text-[#71717A]">
                             {enr.isReadyForClass ? 'Ready in live queue' : 'Offline'}
                           </div>
                         </td>
                         <td className="py-4 px-4">
-                          <div className="font-semibold text-[#18181B]">{enr.languageName}</div>
+                          <div className="font-semibold text-[#18181B]">{course.languageName}</div>
                           <div className="text-[11px] text-[#52525B]">
-                            {enr.audience === 'adult' ? 'Adult 3-Hr Live' : 'Children 1-Hr Interactive'}
+                            {course.audience === 'adult' ? 'Adult 3-Hr Live' : 'Children 1-Hr Interactive'}
                           </div>
                         </td>
                         <td className="py-4 px-4">
@@ -506,7 +630,8 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                             {enr.planType === 'monthly_pass' ? 'Monthly Unlimited' : 'Per-Session'}
                           </div>
                           <div className="font-mono text-[11px] text-[#52525B] tabular-nums">
-                            {enr.paymentMethod.toUpperCase()} · KES {enr.amountKes.toLocaleString()}
+                            {enr.paymentMethod.toUpperCase()} · KES{' '}
+                            {Number(enr.amountKes || 0).toLocaleString()}
                           </div>
                         </td>
                         <td className="py-4 px-4 font-mono tabular-nums">
@@ -518,7 +643,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                           </span>
                         </td>
                         <td className="py-4 px-4 font-mono font-semibold text-[#0F6B4B] tabular-nums">
-                          {enr.testScoreAvg}%
+                          {Number(enr.testScoreAvg || 0)}%
                         </td>
                         <td className="py-4 px-4 text-right space-x-2 whitespace-nowrap">
                           <button
@@ -529,7 +654,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                             <span>Email Time</span>
                           </button>
                           <a
-                            href={enr.jitsiRoomUrl}
+                            href={jitsiUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0F6B4B] text-white rounded-lg font-semibold"
@@ -539,7 +664,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                           </a>
                           {enr.paymentStatus === 'completed' ? (
                             <button
-                              onClick={() => onVerifyEnrollment(enr.id, 'revoked')}
+                              onClick={() => handleVerifyEnrollmentAction(enr.id, 'revoked')}
                               title="Revoke access"
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-[#E5E3DC] hover:bg-red-50 text-[#52525B] hover:text-red-600 rounded-lg cursor-pointer"
                             >
@@ -547,7 +672,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                             </button>
                           ) : (
                             <button
-                              onClick={() => onVerifyEnrollment(enr.id, 'completed')}
+                              onClick={() => handleVerifyEnrollmentAction(enr.id, 'completed')}
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#0F6B4B] text-white rounded-lg cursor-pointer"
                             >
                               <Check className="w-3.5 h-3.5" />
@@ -573,7 +698,9 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                 <h3 className="font-display text-xl font-semibold text-[#18181B]">
                   {emailTarget === 'all_course'
                     ? 'Send Class-Time Email to Enrolled Cohort'
-                    : `Send Class-Time Email to ${emailTarget.studentName} (${emailTarget.studentEmail})`}
+                    : `Send Class-Time Email to ${
+                        userById.get(emailTarget.studentUid)?.fullName || emailTarget.studentName
+                      } (${userById.get(emailTarget.studentUid)?.email || emailTarget.studentEmail})`}
                 </h3>
                 <button
                   type="button"
@@ -627,9 +754,11 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                 </button>
                 {emailTarget !== 'all_course' && (
                   <a
-                    href={`mailto:${emailTarget.studentEmail}?subject=${encodeURIComponent(
-                      emailSubject
-                    )}&body=${encodeURIComponent(emailBody)}`}
+                    href={`mailto:${
+                      userById.get(emailTarget.studentUid)?.email || emailTarget.studentEmail
+                    }?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(
+                      emailBody
+                    )}`}
                     className="px-4 py-2.5 border border-[#E5E3DC] hover:bg-[#F3F2EE] text-[#18181B] font-medium rounded-xl"
                   >
                     Open in Mail Client
@@ -692,7 +821,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                 onChange={(e) => {
                   const id = e.target.value;
                   setSessCourseId(id);
-                  const found = courses.find((c) => c.id === id);
+                  const found = courseById.get(id);
                   if (found) {
                     setSessStart(found.audience === 'adult' ? '18:00 EAT' : '10:00 EAT');
                     setSessEnd(found.audience === 'adult' ? '21:00 EAT' : '11:00 EAT');
@@ -762,46 +891,49 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             <h3 className="font-display text-xl font-semibold text-[#18181B]">
               Active Daily Live Sessions ({liveSessions.length})
             </h3>
-            {liveSessions.map((sess) => (
-              <div
-                key={sess.id}
-                className="bg-white border border-[#E5E3DC] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-[#52525B]">
-                    <span className="font-semibold text-[#0F6B4B]">{sess.languageName}</span>
-                    <span>·</span>
-                    <span className="font-mono">
-                      {sess.sessionDate} · {sess.startTimeEat} – {sess.endTimeEat}
-                    </span>
+            {liveSessions.map((sess) => {
+              const course = resolveCourseForId(sess.courseId);
+              return (
+                <div
+                  key={sess.id}
+                  className="bg-white border border-[#E5E3DC] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-[#52525B]">
+                      <span className="font-semibold text-[#0F6B4B]">{course.languageName}</span>
+                      <span>·</span>
+                      <span className="font-mono">
+                        {sess.sessionDate} · {sess.startTimeEat} – {sess.endTimeEat}
+                      </span>
+                    </div>
+                    <div className="text-sm font-semibold text-[#18181B]">{sess.topic}</div>
+                    <div className="text-[11px] font-mono text-[#71717A]">{sess.jitsiRoomUrl}</div>
                   </div>
-                  <div className="text-sm font-semibold text-[#18181B]">{sess.topic}</div>
-                  <div className="text-[11px] font-mono text-[#71717A]">{sess.jitsiRoomUrl}</div>
-                </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <select
-                    value={sess.status}
-                    onChange={(e) =>
-                      onUpdateSessionStatus(sess.id, e.target.value as DailyLiveSession['status'])
-                    }
-                    className="px-2.5 py-1.5 rounded-lg border border-[#D4D4D8] bg-white font-medium"
-                  >
-                    <option value="scheduled">Scheduled</option>
-                    <option value="live_now">Live Now</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                  <a
-                    href={sess.jitsiRoomUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-3 py-1.5 bg-[#0F6B4B] text-white rounded-lg font-semibold"
-                  >
-                    Launch Jitsi
-                  </a>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <select
+                      value={sess.status}
+                      onChange={(e) =>
+                        onUpdateSessionStatus(sess.id, e.target.value as DailyLiveSession['status'])
+                      }
+                      className="px-2.5 py-1.5 rounded-lg border border-[#D4D4D8] bg-white font-medium"
+                    >
+                      <option value="scheduled">Scheduled</option>
+                      <option value="live_now">Live Now</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                    <a
+                      href={sess.jitsiRoomUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-[#0F6B4B] text-white rounded-lg font-semibold"
+                    >
+                      Launch Jitsi
+                    </a>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -896,29 +1028,37 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    filteredTransactions.map((tx) => (
-                      <tr key={tx.id}>
-                        <td className="py-3.5 px-4 font-mono">{tx.enrolledAt}</td>
-                        <td className="py-3.5 px-4 font-mono font-semibold text-[#18181B]">
-                          {tx.transactionRef}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <div className="font-semibold text-[#18181B]">{tx.studentName}</div>
-                          <div className="text-[11px] text-[#71717A]">{tx.studentEmail}</div>
-                        </td>
-                        <td className="py-3.5 px-4">{tx.languageName}</td>
-                        <td className="py-3.5 px-4">
-                          {tx.planType === 'monthly_pass' ? 'Monthly Pass' : 'Per Session'}
-                        </td>
-                        <td className="py-3.5 px-4 uppercase font-mono">{tx.paymentMethod}</td>
-                        <td className="py-3.5 px-4 font-mono font-semibold tabular-nums">
-                          {tx.amountKes.toLocaleString()}
-                        </td>
-                        <td className="py-3.5 px-4 font-semibold text-[#0F6B4B] capitalize">
-                          {tx.paymentStatus}
-                        </td>
-                      </tr>
-                    ))
+                    filteredTransactions.map((tx) => {
+                      const student = userById.get(tx.studentUid);
+                      const course = resolveCourseForId(tx.courseId);
+                      return (
+                        <tr key={tx.id}>
+                          <td className="py-3.5 px-4 font-mono">{tx.enrolledAt}</td>
+                          <td className="py-3.5 px-4 font-mono font-semibold text-[#18181B]">
+                            {tx.transactionRef}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="font-semibold text-[#18181B]">
+                              {student?.fullName || tx.studentName}
+                            </div>
+                            <div className="text-[11px] text-[#71717A]">
+                              {student?.email || tx.studentEmail}
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">{course.languageName}</td>
+                          <td className="py-3.5 px-4">
+                            {tx.planType === 'monthly_pass' ? 'Monthly Pass' : 'Per Session'}
+                          </td>
+                          <td className="py-3.5 px-4 uppercase font-mono">{tx.paymentMethod}</td>
+                          <td className="py-3.5 px-4 font-mono font-semibold tabular-nums">
+                            {Number(tx.amountKes || 0).toLocaleString()}
+                          </td>
+                          <td className="py-3.5 px-4 font-semibold text-[#0F6B4B] capitalize">
+                            {tx.paymentStatus}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1031,19 +1171,24 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
               Currently Shared Library ({materials.length})
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {materials.map((m) => (
-                <div
-                  key={m.id}
-                  className="bg-white border border-[#E5E3DC] rounded-2xl p-4 space-y-2 text-xs"
-                >
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-semibold text-[#0F6B4B] uppercase">{m.materialType}</span>
-                    <span className="text-[#71717A]">{m.languageName}</span>
+              {materials.map((m) => {
+                const course = resolveCourseForId(m.courseId);
+                return (
+                  <div
+                    key={m.id}
+                    className="bg-white border border-[#E5E3DC] rounded-2xl p-4 space-y-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-[#0F6B4B] uppercase">
+                        {m.materialType}
+                      </span>
+                      <span className="text-[#71717A]">{course.languageName}</span>
+                    </div>
+                    <div className="font-semibold text-sm text-[#18181B]">{m.title}</div>
+                    <p className="text-[#52525B] line-clamp-2">{m.description}</p>
                   </div>
-                  <div className="font-semibold text-sm text-[#18181B]">{m.title}</div>
-                  <p className="text-[#52525B] line-clamp-2">{m.description}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1152,25 +1297,34 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             <h3 className="font-display text-xl font-semibold text-[#18181B]">
               Published Tests & Word Game Activity
             </h3>
-            {tests.map((t) => (
-              <div key={t.id} className="bg-white border border-[#E5E3DC] rounded-2xl p-4 text-xs">
-                <div className="font-semibold text-[#0F6B4B]">{t.languageName}</div>
-                <div className="font-semibold text-sm text-[#18181B] mt-0.5">{t.title}</div>
-                <div className="text-[#52525B] mt-1">{t.questions.length} question(s)</div>
-              </div>
-            ))}
+            {tests.map((t) => {
+              const course = resolveCourseForId(t.courseId);
+              return (
+                <div
+                  key={t.id}
+                  className="bg-white border border-[#E5E3DC] rounded-2xl p-4 text-xs"
+                >
+                  <div className="font-semibold text-[#0F6B4B]">{course.languageName}</div>
+                  <div className="font-semibold text-sm text-[#18181B] mt-0.5">{t.title}</div>
+                  <div className="text-[#52525B] mt-1">{t.questions.length} question(s)</div>
+                </div>
+              );
+            })}
 
             {wordGameScores.length > 0 && (
               <div className="bg-white border border-[#E5E3DC] rounded-2xl p-4 space-y-2 text-xs">
                 <div className="font-semibold text-[#B45309]">Children’s Word Game Scores</div>
-                {wordGameScores.map((wg) => (
-                  <div key={wg.id} className="flex justify-between text-[#3F3F46]">
-                    <span>
-                      {wg.studentName} · {wg.languageName}
-                    </span>
-                    <span className="font-mono font-semibold tabular-nums">{wg.score} pts</span>
-                  </div>
-                ))}
+                {wordGameScores.map((wg) => {
+                  const student = userById.get(wg.studentUid);
+                  return (
+                    <div key={wg.id} className="flex justify-between text-[#3F3F46]">
+                      <span>
+                        {student?.fullName || wg.studentName} · {wg.languageName}
+                      </span>
+                      <span className="font-mono font-semibold tabular-nums">{wg.score} pts</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1185,40 +1339,44 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
               <Volume2 className="w-5 h-5 text-[#0F6B4B]" />
               <span>Student Pronunciation Recordings</span>
             </h2>
-            {audioSubmissions.map((sub) => (
-              <div
-                key={sub.id}
-                className="p-4 rounded-xl bg-[#FAFAF8] border border-[#E5E3DC] space-y-2 text-xs"
-              >
-                <div className="flex justify-between">
-                  <span className="font-semibold text-[#18181B]">
-                    {sub.studentName} · {sub.language}
-                  </span>
-                  <span className="font-mono font-semibold text-[#0F6B4B] tabular-nums">
-                    {sub.accuracyScore}%
-                  </span>
+            {audioSubmissions.map((sub) => {
+              const student = userById.get(sub.studentUid);
+              const course = resolveCourseForId(sub.courseId);
+              return (
+                <div
+                  key={sub.id}
+                  className="p-4 rounded-xl bg-[#FAFAF8] border border-[#E5E3DC] space-y-2 text-xs"
+                >
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-[#18181B]">
+                      {student?.fullName || sub.studentName} ·{' '}
+                      {sub.language || course.languageName}
+                    </span>
+                    <span className="font-mono font-semibold text-[#0F6B4B] tabular-nums">
+                      {sub.accuracyScore}%
+                    </span>
+                  </div>
+                  <div className="font-medium text-[#18181B]">"{sub.phrase}"</div>
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      type="text"
+                      value={audioNotes[sub.id] ?? sub.tutorFeedback}
+                      onChange={(e) => setAudioNotes({ ...audioNotes, [sub.id]: e.target.value })}
+                      placeholder="Write pronunciation feedback..."
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-[#D4D4D8] bg-white"
+                    />
+                    <button
+                      onClick={() =>
+                        handleSaveAudioFeedback(sub.id, audioNotes[sub.id] ?? sub.tutorFeedback)
+                      }
+                      className="px-3 py-1.5 bg-[#0F6B4B] text-white rounded-lg font-semibold cursor-pointer"
+                    >
+                      Save
+                    </button>
+                  </div>
                 </div>
-                <div className="font-medium text-[#18181B]">"{sub.phrase}"</div>
-                <div className="flex gap-2 pt-1">
-                  <input
-                    type="text"
-                    value={audioNotes[sub.id] ?? sub.tutorFeedback}
-                    onChange={(e) => setAudioNotes({ ...audioNotes, [sub.id]: e.target.value })}
-                    placeholder="Write pronunciation feedback..."
-                    className="flex-1 px-3 py-1.5 rounded-lg border border-[#D4D4D8] bg-white"
-                  />
-                  <button
-                    onClick={() => {
-                      onFeedbackAudio(sub.id, audioNotes[sub.id] ?? sub.tutorFeedback);
-                      playAudioChime('success');
-                    }}
-                    className="px-3 py-1.5 bg-[#0F6B4B] text-white rounded-lg font-semibold cursor-pointer"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4">
@@ -1226,21 +1384,25 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
               <Star className="w-5 h-5 text-[#B45309]" />
               <span>Student Satisfaction Ratings ({ratings.length})</span>
             </h2>
-            {ratings.map((r) => (
-              <div
-                key={r.id}
-                className="p-4 rounded-xl bg-[#FAFAF8] border border-[#E5E3DC] space-y-1.5 text-xs"
-              >
-                <div className="flex justify-between">
-                  <span className="font-semibold text-[#18181B]">
-                    {r.studentName} · {r.languageName}
-                  </span>
-                  <span className="font-mono text-[#B45309]">{'★'.repeat(r.rating)}</span>
+            {ratings.map((r) => {
+              const student = userById.get(r.studentUid);
+              const course = resolveCourseForId(r.courseId);
+              return (
+                <div
+                  key={r.id}
+                  className="p-4 rounded-xl bg-[#FAFAF8] border border-[#E5E3DC] space-y-1.5 text-xs"
+                >
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-[#18181B]">
+                      {student?.fullName || r.studentName} · {course.languageName}
+                    </span>
+                    <span className="font-mono text-[#B45309]">{'★'.repeat(r.rating)}</span>
+                  </div>
+                  <div className="text-[#0F6B4B] font-medium">{r.satisfactionLevel}</div>
+                  <p className="text-[#3F3F46]">"{r.comment}"</p>
                 </div>
-                <div className="text-[#0F6B4B] font-medium">{r.satisfactionLevel}</div>
-                <p className="text-[#3F3F46]">"{r.comment}"</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1473,3 +1635,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     </div>
   );
 };
+```[cite: 19, 21, 22]
+
+Would you like to wire `TutorAdminGate` to `/api/auth/tutor-login` next so signing in with email, password, and security PIN opens this console directly?
