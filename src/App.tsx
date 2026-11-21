@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Course,
   Enrollment,
@@ -86,6 +86,201 @@ function isTutorAdminUrl(): boolean {
   );
 }
 
+function resolveCourseImageUrl(
+  rawImageUrl: unknown,
+  fallbackImageUrl: string | undefined,
+  courseId: string
+): string | undefined {
+  const fromDb =
+    typeof rawImageUrl === 'string' && rawImageUrl.trim().length > 0
+      ? rawImageUrl.trim()
+      : undefined;
+
+  const candidate = fromDb ?? fallbackImageUrl?.trim();
+
+  if (!candidate) {
+    if (typeof console !== 'undefined') {
+      console.warn(`[ImageDebug] Course "${courseId}" has NULL image_url in DB and no fallback.`);
+    }
+    return undefined;
+  }
+
+  let normalized = candidate;
+  if (
+    !normalized.startsWith('http://') &&
+    !normalized.startsWith('https://') &&
+    !normalized.startsWith('data:') &&
+    !normalized.startsWith('/')
+  ) {
+    normalized = `/${normalized}`;
+  }
+
+  if (typeof console !== 'undefined') {
+    console.debug(`[ImageDebug] Course "${courseId}"`, {
+      dbImageUrl: fromDb ?? null,
+      fallbackImageUrl: fallbackImageUrl ?? null,
+      usingFallback: !fromDb && Boolean(fallbackImageUrl),
+      finalUrl: normalized,
+    });
+  }
+
+  return normalized;
+}
+
+function mapApiCourse(raw: Record<string, unknown>, fallback?: Course): Course {
+  const perSession = Number(
+    raw.per_session_price_kes ?? raw.perSessionPriceKes ?? fallback?.perSessionPriceKes ?? 1500
+  );
+  const monthlyPass = Number(
+    raw.monthly_pass_price_kes ?? raw.monthlyPassPriceKes ?? fallback?.monthlyPassPriceKes ?? 9600
+  );
+  const durationMinutes = Number(
+    raw.session_duration_minutes ??
+      raw.sessionDurationMinutes ??
+      fallback?.sessionDurationMinutes ??
+      180
+  );
+  const courseId = String(raw.id ?? fallback?.id ?? '');
+
+  const rawFromDb = raw.image_url ?? raw.imageUrl;
+  const dbUrl = typeof rawFromDb === 'string' ? rawFromDb.trim() : '';
+  const seedUrl = typeof fallback?.imageUrl === 'string' ? fallback.imageUrl.trim() : '';
+  let resolvedImageUrl: string = dbUrl || seedUrl || '';
+
+  if (
+    resolvedImageUrl &&
+    !resolvedImageUrl.startsWith('http://') &&
+    !resolvedImageUrl.startsWith('https://') &&
+    !resolvedImageUrl.startsWith('data:') &&
+    !resolvedImageUrl.startsWith('/')
+  ) {
+    resolvedImageUrl = `/${resolvedImageUrl}`;
+  }
+
+  if (typeof console !== 'undefined') {
+    console.debug(`[ImageDebug] Course "${courseId}"`, {
+      dbImageUrl: dbUrl || null,
+      fallbackImageUrl: seedUrl || null,
+      usingFallback: !dbUrl && Boolean(seedUrl),
+      finalUrl: resolvedImageUrl || '(empty)',
+    });
+  }
+
+return {
+    id: courseId,
+    title: String(raw.title ?? fallback?.title ?? ''),
+    languageName: String(raw.language_name ?? raw.languageName ?? fallback?.languageName ?? ''),
+    category: raw.category === 'foreign' ? 'foreign' : 'kenyan',
+    audience: raw.audience === 'children' ? 'children' : 'adult',
+    sessionDurationMinutes: durationMinutes === 60 ? 60 : 180,
+    description: String(raw.description ?? fallback?.description ?? ''),
+    level: String(raw.level ?? fallback?.level ?? 'Beginner to Intermediate'),
+    perSessionPriceKes: perSession,
+    monthlyPassPriceKes: monthlyPass,
+    jitsiRoomName: String(raw.jitsi_room_name ?? raw.jitsiRoomName ?? fallback?.jitsiRoomName ?? ''),
+    pdfTitle: String(raw.pdf_title ?? raw.pdfTitle ?? fallback?.pdfTitle ?? ''),
+    tutorUid: String(raw.tutor_uid ?? raw.tutorUid ?? fallback?.tutorUid ?? ''),
+    tutorName: String(raw.tutor_name ?? raw.tutorName ?? fallback?.tutorName ?? 'Dr. Amina Wambui'),
+    imageUrl: resolvedImageUrl,
+    lessonsCount: Number(raw.lessons_count ?? raw.lessonsCount ?? fallback?.lessonsCount ?? 10),
+    modules: fallback?.modules ?? [],
+  };
+}
+
+
+function mapApiEnrollment(
+  raw: Record<string, unknown>,
+  coursesList: Course[]
+): Enrollment {
+  const studentObj =
+    raw.student && typeof raw.student === 'object'
+      ? (raw.student as Record<string, unknown>)
+      : null;
+  const courseObj =
+    raw.course && typeof raw.course === 'object'
+      ? (raw.course as Record<string, unknown>)
+      : null;
+  const courseId = String(raw.course_id ?? raw.courseId ?? courseObj?.id ?? '');
+  const matchedCourse = coursesList.find((c) => c.id === courseId);
+  const audience =
+    raw.audience === 'children' || matchedCourse?.audience === 'children'
+      ? 'children'
+      : 'adult';
+
+  return {
+    id: String(raw.enrollment_id ?? raw.id ?? `enr-${Date.now()}`),
+    studentUid: String(
+      raw.studentUid ?? raw.student_id ?? studentObj?.uid ?? studentObj?.id ?? ''
+    ),
+    studentName: String(raw.studentName ?? studentObj?.full_name ?? 'Student'),
+    studentEmail: String(raw.studentEmail ?? studentObj?.email ?? ''),
+    courseId,
+    courseTitle: String(raw.courseTitle ?? courseObj?.title ?? matchedCourse?.title ?? ''),
+    languageName: String(
+      raw.languageName ?? courseObj?.language_name ?? matchedCourse?.languageName ?? ''
+    ),
+    audience,
+    planType:
+      raw.plan_type === 'monthly_pass' || raw.planType === 'monthly_pass'
+        ? 'monthly_pass'
+        : 'per_session',
+    amountKes: Number(raw.amount_kes ?? raw.amountKes ?? 0),
+    paymentMethod:
+      raw.payment_method === 'visa' || raw.paymentMethod === 'visa' ? 'visa' : 'mpesa',
+    transactionRef: String(raw.transaction_ref ?? raw.transactionRef ?? raw.payment_ref ?? ''),
+    paymentStatus:
+      raw.payment_status === 'revoked' || raw.paymentStatus === 'revoked'
+        ? 'revoked'
+        : raw.payment_status === 'pending' || raw.paymentStatus === 'pending'
+        ? 'pending'
+        : 'completed',
+    jitsiRoomUrl: String(
+      raw.jitsi_room_url ??
+        raw.jitsiRoomUrl ??
+        (matchedCourse ? `https://meet.jit.si/${matchedCourse.jitsiRoomName}` : '')
+    ),
+    preferredSlot: String(
+      raw.preferred_time_slot ?? raw.preferred_slot ?? raw.preferredSlot ?? ''
+    ),
+    isReadyForClass: Boolean(raw.is_ready ?? raw.is_ready_for_class ?? raw.isReadyForClass),
+    modulesCompletedCount: Number(
+      raw.modules_completed_count ?? raw.modulesCompletedCount ?? 0
+    ),
+    totalModules: Number(
+      raw.total_modules ?? raw.totalModules ?? matchedCourse?.modules.length ?? 4
+    ),
+    completedModuleIds: Array.isArray(raw.completedModuleIds)
+      ? (raw.completedModuleIds as string[])
+      : [],
+    testScoreAvg: Number(raw.test_score_avg ?? raw.testScoreAvg ?? 0),
+    enrolledAt: String(
+      raw.enrolled_at ?? raw.enrolledAt ?? new Date().toISOString().slice(0, 10)
+    ),
+    updatedAt: String(
+      raw.updated_at ?? raw.updatedAt ?? new Date().toISOString().slice(0, 10)
+    ),
+  };
+}
+
+function mapApiAudioSubmission(raw: Record<string, unknown>): AudioSubmission {
+  return {
+    id: String(raw.id ?? `aud-${Date.now()}`),
+    studentUid: String(raw.studentUid ?? raw.student_id ?? ''),
+    studentName: String(raw.studentName ?? raw.student_name ?? 'Student'),
+    courseId: String(raw.course_id ?? raw.courseId ?? ''),
+    language: String(raw.language ?? ''),
+    phrase: String(raw.phrase ?? ''),
+    accuracyScore: Number(raw.accuracy_score ?? raw.accuracyScore ?? 0),
+    tutorFeedback: String(raw.tutor_feedback ?? raw.feedback ?? raw.tutorFeedback ?? ''),
+    submittedAt: String(
+      raw.submitted_at ?? raw.submittedAt ?? new Date().toISOString().slice(0, 10)
+    ),
+    updatedAt: String(
+      raw.updated_at ?? raw.updatedAt ?? new Date().toISOString().slice(0, 10)
+    ),
+  };
+}
+
 export default function App() {
   const [registeredUsers, setRegisteredUsers] = useState<UserProfile[]>([]);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -98,7 +293,7 @@ export default function App() {
   const [checkoutCourse, setCheckoutCourse] = useState<Course | null>(null);
   const [checkoutCompleted, setCheckoutCompleted] = useState(false);
 
-  const [courses] = useState<Course[]>(SEED_COURSES);
+  const [courses, setCourses] = useState<Course[]>(SEED_COURSES);
   const [enrollments, setEnrollments] = useState<Enrollment[]>(SEED_ENROLLMENTS);
   const [liveSessions, setLiveSessions] = useState<DailyLiveSession[]>(SEED_LIVE_SESSIONS);
   const [emailNotifications, setEmailNotifications] = useState<ClassEmailNotification[]>(
@@ -113,38 +308,99 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<SecurityAuditLog[]>(INITIAL_AUDIT_LOGS);
 
   const userRole = currentUser?.role || 'student';
+  const isVerifiedAdmin = Boolean(
+    currentUser && currentUser.role === 'tutor' && currentUser.isAdmin
+  );
 
-  const appendAuditLog = ({
-    actorEmail,
-    actorRole,
-    endpoint = '/tutor-admin',
-    action,
-    httpStatus,
-    details,
-  }: {
-    actorEmail: string;
-    actorRole: string;
-    endpoint?: string;
-    action: string;
-    httpStatus: number;
-    details: string;
-  }) => {
-    setAuditLogs((prev) => [
-      {
-        id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        timestamp: new Date().toISOString().slice(0, 16).replace('T', ' '),
-        actorEmail,
-        actorRole,
-        endpoint,
-        action,
-        httpStatus,
-        details,
+  const appendAuditLog = useCallback(
+    ({
+      actorEmail,
+      actorRole,
+      endpoint = '/tutor-admin',
+      action,
+      httpStatus,
+      details,
+    }: {
+      actorEmail: string;
+      actorRole: string;
+      endpoint?: string;
+      action: string;
+      httpStatus: number;
+      details: string;
+    }) => {
+      setAuditLogs((prev) => [
+        {
+          id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          timestamp: new Date().toISOString().slice(0, 16).replace('T', ' '),
+          actorEmail,
+          actorRole,
+          endpoint,
+          action,
+          httpStatus,
+          details,
+        },
+        ...prev,
+      ]);
+    },
+    []
+  );
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/courses')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data || !Array.isArray(data.courses) || data.courses.length === 0) {
+          return;
+        }
+        setCourses((prev) =>
+          (data.courses as Record<string, unknown>[]).map((raw) => {
+            const fallback = prev.find((c) => c.id === String(raw.id ?? ''));
+            return mapApiCourse(raw, fallback);
+          })
+        );
+      })
+      .catch(() => {
+        // Keep seeded courses if backend API is unreachable
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) return;
+    let active = true;
+    fetch('/api/tutor/live-students', {
+      headers: {
+        'x-user-role': 'tutor',
+        'x-user-email': currentUser.email,
       },
-      ...prev,
-    ]);
-  };
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data) return;
+        if (Array.isArray(data.all_roster) && data.all_roster.length > 0) {
+          setEnrollments(
+            (data.all_roster as Record<string, unknown>[]).map((r) =>
+              mapApiEnrollment(r, courses)
+            )
+          );
+        }
+        if (Array.isArray(data.audio_submissions) && data.audio_submissions.length > 0) {
+          setAudioSubmissions(
+            (data.audio_submissions as Record<string, unknown>[]).map(mapApiAudioSubmission)
+          );
+        }
+      })
+      .catch(() => {
+        // Keep current state if backend API is unreachable
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, courses]);
 
-  // Sync isolated #/tutor-admin route and block any student probe
   useEffect(() => {
     const syncRoute = () => {
       if (isTutorAdminUrl()) {
@@ -166,13 +422,14 @@ export default function App() {
       }
     };
 
+    syncRoute();
     window.addEventListener('hashchange', syncRoute);
     window.addEventListener('popstate', syncRoute);
     return () => {
       window.removeEventListener('hashchange', syncRoute);
       window.removeEventListener('popstate', syncRoute);
     };
-  }, [currentUser]);
+  }, [currentUser, appendAuditLog]);
 
   const openIsolatedTutorPortal = () => {
     if (window.location.hash !== '#/tutor-admin') {
@@ -202,7 +459,6 @@ export default function App() {
     setActiveView('landing');
   };
 
-  // Enforce student registration & login before enrollment
   const handleRequestEnroll = (course: Course) => {
     if (!currentUser) {
       setPendingEnrollCourse(course);
@@ -296,8 +552,20 @@ export default function App() {
     if (adminUser.role !== 'tutor' || !adminUser.isAdmin) return;
     setPendingEnrollCourse(null);
     setCheckoutCourse(null);
+    setShowAuthModal(false);
     setCurrentUser(adminUser);
+    if (window.location.hash !== '#/tutor-admin') {
+      window.location.hash = '#/tutor-admin';
+    }
     setActiveView('tutor');
+    appendAuditLog({
+      actorEmail: adminUser.email,
+      actorRole: 'tutor_admin',
+      endpoint: '/api/auth/tutor-login',
+      action: 'TUTOR_3FA_LOGIN_SUCCESS',
+      httpStatus: 200,
+      details: `Authenticated Tutor & Admin ${adminUser.fullName}.`,
+    });
   };
 
   const handleSignOut = () => {
@@ -631,11 +899,10 @@ export default function App() {
   };
 
   const activeStudentEnrollments = enrollments.filter(
-    (e) => currentUser && e.studentUid === currentUser.uid
-  );
-
-  const isVerifiedAdmin = Boolean(
-    currentUser && currentUser.role === 'tutor' && currentUser.isAdmin
+    (e) =>
+      currentUser &&
+      (e.studentUid === currentUser.uid ||
+        (currentUser.email && e.studentEmail.toLowerCase() === currentUser.email.toLowerCase()))
   );
 
   return (
@@ -684,27 +951,15 @@ export default function App() {
           />
         )}
 
-        {/* Separate isolated Tutor & Admin Authentication Portal */}
         {activeView === 'tutor_gate' && (
           <TutorAdminGate
             currentUser={currentUser}
             onAdminLoginSuccess={handleAdminLoginSuccess}
-            onLogSecurityEvent={({ actorEmail, actorRole, action, httpStatus, details }) =>
-              appendAuditLog({
-                actorEmail,
-                actorRole,
-                endpoint: '/tutor-admin',
-                action,
-                httpStatus,
-                details,
-              })
-            }
             onBackToLanding={clearAdminHashAndGoLanding}
-            onOpenLogin={() => setShowAuthModal(true)}
+            onLogout={handleSignOut}
           />
         )}
 
-        {/* Tutor & Admin Console strictly mounted ONLY when verified Tutor/Admin session exists */}
         {activeView === 'tutor' && isVerifiedAdmin && (
           <TutorWorkspace
             currentUser={currentUser}
@@ -770,7 +1025,6 @@ export default function App() {
             <span>Adult 3-Hr & Children 1-Hr Live Jitsi Sessions</span>
             <span>·</span>
             <span>M-Pesa & Visa</span>
-            {/* Hidden from authenticated students so students have zero visibility into Tutor/Admin portal */}
             {(!currentUser || isVerifiedAdmin) && (
               <>
                 <span>·</span>
