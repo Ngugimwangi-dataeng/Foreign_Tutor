@@ -46,6 +46,12 @@ load_dotenv(ROOT_DIR / ".env")
 DB_LOCK = threading.RLock()
 PASSWORD_HASH_ITERATIONS = 600_000
 
+# In-memory rate limiter for Tutor/Admin 3-factor login (5 failed attempts -> 30s lockout)
+TUTOR_LOGIN_LOCK = threading.Lock()
+TUTOR_FAILED_ATTEMPTS: dict[str, dict[str, float | int]] = {}
+MAX_TUTOR_ATTEMPTS = 5
+TUTOR_LOCKOUT_SECONDS = 30
+
 
 class DatabaseConnection:
     def __init__(self, connection: psycopg.Connection):
@@ -90,22 +96,43 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
+    if not password or not password_hash:
+        return False
     try:
-        algorithm, iterations_text, encoded_salt, encoded_digest = password_hash.split("$")
-        iterations = int(iterations_text)
-        if algorithm != "pbkdf2_sha256" or not 100_000 <= iterations <= 2_000_000:
-            return False
-        salt = base64.b64decode(encoded_salt, altchars=b"-_", validate=True)
-        expected_digest = base64.b64decode(
-            encoded_digest, altchars=b"-_", validate=True
-        )
+        parts = password_hash.split("$")
+        if parts[0] == "pbkdf2_sha256" and len(parts) == 4:
+            _, iterations_text, encoded_salt, encoded_digest = parts
+            iterations = int(iterations_text)
+            if not 100_000 <= iterations <= 2_000_000:
+                return False
+            salt = base64.b64decode(encoded_salt, altchars=b"-_", validate=True)
+            expected_digest = base64.b64decode(
+                encoded_digest, altchars=b"-_", validate=True
+            )
+            actual_digest = hashlib.pbkdf2_hmac(
+                "sha256", password.encode("utf-8"), salt, iterations
+            )
+            return hmac.compare_digest(actual_digest, expected_digest)
+
+        if parts[0] == "scrypt" and len(parts) == 3:
+            _, encoded_salt, encoded_digest = parts
+            salt = base64.b64decode(encoded_salt, altchars=b"-_", validate=True)
+            expected_digest = base64.b64decode(
+                encoded_digest, altchars=b"-_", validate=True
+            )
+            actual_digest = hashlib.scrypt(
+                password.encode("utf-8"),
+                salt=salt,
+                n=16384,
+                r=8,
+                p=1,
+                dklen=len(expected_digest),
+            )
+            return hmac.compare_digest(actual_digest, expected_digest)
     except (ValueError, binascii.Error):
         return False
 
-    actual_digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, iterations
-    )
-    return hmac.compare_digest(actual_digest, expected_digest)
+    return False
 
 
 def auth_user_payload(row: dict) -> dict:
@@ -181,6 +208,25 @@ def init_db() -> None:
             )
             for statement in migrations:
                 conn.execute(statement)
+
+            # Replace placeholder password/PIN strings on seeded tutor account with real hashes
+            tutor_row = conn.execute(
+                "SELECT id, password_hash, admin_pin_hash FROM users WHERE LOWER(email) = %s",
+                ("amina.wambui@lughasmart.ac.ke",),
+            ).fetchone()
+            if tutor_row:
+                default_pw = os.environ.get("SEED_TUTOR_PASSWORD", "password123")
+                default_pin = os.environ.get("SEED_TUTOR_PIN", "202688")
+                if tutor_row["password_hash"] == "scrypt$replace_with_real_hash":
+                    conn.execute(
+                        "UPDATE users SET password_hash = %s WHERE id = %s",
+                        (hash_password(default_pw), tutor_row["id"]),
+                    )
+                if tutor_row["admin_pin_hash"] == "scrypt$replace_with_pin_hash":
+                    conn.execute(
+                        "UPDATE users SET admin_pin_hash = %s WHERE id = %s",
+                        (hash_password(default_pin), tutor_row["id"]),
+                    )
 
             conn.commit()
         except Exception:
@@ -629,6 +675,121 @@ class LughaHandler(BaseHTTPRequestHandler):
                     conn.execute(
                         "UPDATE users SET last_login_at = NOW() WHERE uid = %s",
                         (row["uid"],),
+                    )
+                    conn.commit()
+                    self._send_json({"user": auth_user_payload(row)})
+                finally:
+                    conn.close()
+            return
+
+        if path == "/api/auth/tutor-login":
+            email = str(body.get("email") or "").strip().lower()
+            password = str(body.get("password") or "")
+            secret_pin = str(body.get("pin") or body.get("secretKey") or "").strip()
+
+            if not email or not password or not secret_pin:
+                self._send_json(
+                    {"error": "Admin Email, Password, and 6-digit Security PIN are all required."},
+                    status=400,
+                )
+                return
+
+            now_ts = time.time()
+            with TUTOR_LOGIN_LOCK:
+                record = TUTOR_FAILED_ATTEMPTS.get(email)
+                if record and float(record.get("locked_until", 0)) > now_ts:
+                    remaining = int(float(record["locked_until"]) - now_ts) + 1
+                    self._send_json(
+                        {
+                            "error": f"Too many failed attempts. Portal locked for {remaining}s.",
+                            "retry_after_seconds": remaining,
+                        },
+                        status=429,
+                    )
+                    return
+
+            def _record_tutor_failure(reason: str) -> None:
+                with TUTOR_LOGIN_LOCK:
+                    rec = TUTOR_FAILED_ATTEMPTS.setdefault(email, {"count": 0, "locked_until": 0.0})
+                    if float(rec.get("locked_until", 0)) <= time.time() and int(rec.get("count", 0)) >= MAX_TUTOR_ATTEMPTS:
+                        rec["count"] = 0
+                    rec["count"] = int(rec.get("count", 0)) + 1
+                    if int(rec["count"]) >= MAX_TUTOR_ATTEMPTS:
+                        rec["locked_until"] = time.time() + TUTOR_LOCKOUT_SECONDS
+
+                with DB_LOCK:
+                    c = get_conn()
+                    try:
+                        log_audit(
+                            c,
+                            user_email=email,
+                            role="tutor_admin",
+                            endpoint="/api/auth/tutor-login",
+                            action="TUTOR_3FA_LOGIN_FAILED",
+                            status="401_UNAUTHORIZED",
+                            details=reason,
+                        )
+                        c.commit()
+                    finally:
+                        c.close()
+
+            with DB_LOCK:
+                conn = get_conn()
+                try:
+                    row = conn.execute(
+                        """
+                        SELECT uid, full_name, email, role, is_admin, is_active,
+                               created_at, last_login_at, password_hash, admin_pin_hash
+                        FROM users
+                        WHERE LOWER(email) = %s AND role = 'tutor' AND is_admin = TRUE
+                        """,
+                        (email,),
+                    ).fetchone()
+
+                    if not row:
+                        _record_tutor_failure("Unknown tutor/admin email or non-admin role.")
+                        self._send_json(
+                            {"error": "Invalid Admin Email, Password, or Security PIN."},
+                            status=401,
+                        )
+                        return
+
+                    if not row["is_active"]:
+                        _record_tutor_failure("Attempted login to suspended tutor/admin account.")
+                        self._send_json(
+                            {"error": "This tutor/admin account is disabled."},
+                            status=403,
+                        )
+                        return
+
+                    password_ok = verify_password(password, row["password_hash"])
+                    pin_ok = bool(row["admin_pin_hash"]) and verify_password(
+                        secret_pin, row["admin_pin_hash"]
+                    )
+
+                    if not (password_ok and pin_ok):
+                        _record_tutor_failure("Failed password or 6-digit security PIN verification.")
+                        self._send_json(
+                            {"error": "Invalid Admin Email, Password, or Security PIN."},
+                            status=401,
+                        )
+                        return
+
+                    with TUTOR_LOGIN_LOCK:
+                        TUTOR_FAILED_ATTEMPTS.pop(email, None)
+
+                    conn.execute(
+                        "UPDATE users SET last_login_at = NOW() WHERE uid = %s",
+                        (row["uid"],),
+                    )
+                    log_audit(
+                        conn,
+                        user_email=row["email"],
+                        role="tutor_admin",
+                        endpoint="/api/auth/tutor-login",
+                        action="TUTOR_3FA_LOGIN_SUCCESS",
+                        status="200_OK",
+                        details=f"3-Factor Tutor/Admin verification succeeded for {row['full_name']}.",
                     )
                     conn.commit()
                     self._send_json({"user": auth_user_payload(row)})

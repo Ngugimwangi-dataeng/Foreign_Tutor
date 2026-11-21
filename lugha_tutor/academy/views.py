@@ -2,6 +2,7 @@ import json
 import mimetypes
 import os
 import re
+import time
 
 from django.contrib import messages
 from django.contrib.auth import login
@@ -12,6 +13,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from django.conf import settings
+from django.core.cache import cache
+from django.utils.http import url_has_allowed_host_and_scheme
+from .forms import LessonUploadForm, LiveSessionForm, StudentRegistrationForm, TutorAdminSecretLoginForm
 
 from .decorators import tutor_required
 from .forms import LessonUploadForm, LiveSessionForm, StudentRegistrationForm
@@ -56,6 +61,49 @@ def home(request):
             "enrolled_course_ids": enrolled_course_ids,
             "live_now_sessions": live_now_sessions,
         },
+    )
+def tutor_secret_login(request):
+    if request.user.is_authenticated:
+        if request.user.is_staff:
+            return redirect("academy:tutor_dashboard")
+        raise PermissionDenied("403 Forbidden: Student accounts cannot access the Tutor & Admin portal.")
+
+    next_url = request.GET.get("next") or request.POST.get("next") or ""
+    if not url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=not settings.DEBUG,
+    ):
+        next_url = reverse("academy:tutor_dashboard")
+
+    form = TutorAdminSecretLoginForm(request.POST or None)
+    if request.method == "POST":
+        submitted_email = (request.POST.get("email") or "").strip().lower()
+        lock_key = f"tutor_login_lock:{submitted_email}"
+        attempts_key = f"tutor_login_attempts:{submitted_email}"
+        locked_until = cache.get(lock_key)
+
+        if locked_until and locked_until > time.time():
+            remaining = int(locked_until - time.time()) + 1
+            form.add_error(None, f"Too many failed attempts. Try again in {remaining} seconds.")
+        elif form.is_valid() and form.user is not None:
+            cache.delete(lock_key)
+            cache.delete(attempts_key)
+            login(request, form.user, backend="django.contrib.auth.backends.ModelBackend")
+            return redirect(next_url)
+        elif submitted_email:
+            attempts = (cache.get(attempts_key) or 0) + 1
+            if attempts >= 5:
+                cache.set(lock_key, time.time() + 30, timeout=30)
+                cache.delete(attempts_key)
+                form.add_error(None, "Too many failed attempts. Portal locked for 30 seconds.")
+            else:
+                cache.set(attempts_key, attempts, timeout=300)
+
+    return render(
+        request,
+        "registration/login.html",
+        {"form": form, "next": next_url},
     )
 
 

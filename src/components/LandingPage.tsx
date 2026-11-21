@@ -62,7 +62,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </h1>
 
               <p className="text-base text-[#52525B] leading-relaxed max-w-2xl">
-                Built for international visitors, families, and busy professionals. Join 3-hour adult immersion classes or 1-hour interactive children’s sessions with word games, visual image explanations, catch-up audio recordings, and study PDFs.
+                Built for international visitors, families, and busy professionals. Join 3-hour adult immersion classes or 1-hour interactive children sessions with word games, visual image explanations, catch-up audio recordings, and study PDFs.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-sm text-[#3F3F46]">
