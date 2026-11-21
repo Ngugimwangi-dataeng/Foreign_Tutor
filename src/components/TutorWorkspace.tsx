@@ -1635,6 +1635,3 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     </div>
   );
 };
-```[cite: 19, 21, 22]
-
-Would you like to wire `TutorAdminGate` to `/api/auth/tutor-login` next so signing in with email, password, and security PIN opens this console directly?
