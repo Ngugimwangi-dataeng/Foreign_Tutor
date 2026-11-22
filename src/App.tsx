@@ -967,6 +967,22 @@ export default function App() {
       httpStatus: 200,
       details: `${paymentMethod.toUpperCase()} KES ${amountKes} (${transactionRef}) for ${course.languageName}.`,
     });
+    fetch('/api/payments/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        student_id: currentUser.uid,
+        student_email: currentUser.email,
+        course_id: course.id,
+        plan_type: planType,
+        amount_kes: amountKes,
+        payment_method: paymentMethod,
+        transaction_ref: transactionRef,
+        preferred_slot: newEnrollment.preferredSlot,
+      }),
+    }).catch(() => {
+      
+    });
   };
 
   const handleToggleReady = (enrollmentId: string) => {
@@ -1124,7 +1140,6 @@ export default function App() {
         }
       }
     } catch {
-      // Fallback gracefully when running offline or without API server
     }
   };
 
@@ -1352,9 +1367,10 @@ export default function App() {
         )}
       </main>
 
-      {checkoutCourse && currentUser && currentUser.role === 'student' && (
+     {checkoutCourse && currentUser && currentUser.role === 'student' && (
         <CheckoutModal
           course={checkoutCourse}
+          currentUser={currentUser}
           onClose={() => {
             setCheckoutCourse(null);
             if (checkoutCompleted) {
