@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Course,
+  CourseQuestion,
   Enrollment,
   SharedMaterial,
   LanguageTest,
@@ -126,7 +127,6 @@ function resolveCourseImageUrl(
     return BUNDLED_IMAGE_BY_FILENAME[fileName];
   }
 
-  // If DB has a relative path that Vite won't serve in dist/, fall back to bundled asset
   if (candidate.startsWith('/src/') || candidate.startsWith('src/')) {
     return defaultImg;
   }
@@ -418,6 +418,37 @@ function mapApiWordGameScore(raw: Record<string, unknown>): WordGameScore {
   };
 }
 
+function mapApiQuestion(
+  raw: Record<string, unknown>,
+  coursesList: Course[]
+): CourseQuestion {
+  const courseId = String(raw.course_id ?? raw.courseId ?? '');
+  const matched = coursesList.find((c) => c.id === courseId);
+  const rawReply = raw.tutor_reply ?? raw.tutorReply;
+  const tutorReply = typeof rawReply === 'string' && rawReply.trim() ? rawReply : undefined;
+  const rawRepliedBy = raw.replied_by_name ?? raw.repliedByName;
+  const repliedByName =
+    typeof rawRepliedBy === 'string' && rawRepliedBy.trim() ? rawRepliedBy : undefined;
+  const rawRepliedAt = raw.replied_at ?? raw.repliedAt;
+  const repliedAt =
+    typeof rawRepliedAt === 'string' && rawRepliedAt.trim() ? rawRepliedAt : undefined;
+
+  return {
+    id: String(raw.id ?? `q-${Date.now()}`),
+    courseId,
+    languageName: String(raw.language_name ?? raw.languageName ?? matched?.languageName ?? ''),
+    studentUid: String(raw.student_uid ?? raw.studentUid ?? ''),
+    studentName: String(raw.student_name ?? raw.studentName ?? 'Student'),
+    studentEmail: String(raw.student_email ?? raw.studentEmail ?? ''),
+    questionText: String(raw.question_text ?? raw.questionText ?? ''),
+    tutorReply,
+    repliedByName,
+    status: raw.status === 'answered' || Boolean(tutorReply) ? 'answered' : 'open',
+    createdAt: String(raw.created_at ?? raw.createdAt ?? new Date().toISOString()),
+    repliedAt,
+  };
+}
+
 function mapApiAuditLog(raw: Record<string, unknown>): SecurityAuditLog {
   return {
     id: String(raw.id ?? `audit-${Date.now()}`),
@@ -455,6 +486,7 @@ export default function App() {
   const [audioSubmissions, setAudioSubmissions] = useState<AudioSubmission[]>(SEED_AUDIO_SUBMISSIONS);
   const [ratings, setRatings] = useState<TutorRating[]>(SEED_RATINGS);
   const [wordGameScores, setWordGameScores] = useState<WordGameScore[]>([]);
+  const [questions, setQuestions] = useState<CourseQuestion[]>([]);
   const [auditLogs, setAuditLogs] = useState<SecurityAuditLog[]>(INITIAL_AUDIT_LOGS);
 
   const userRole = currentUser?.role || 'student';
@@ -518,13 +550,37 @@ export default function App() {
           })
         );
       })
-      .catch(() => {
-        // Keep seeded courses if backend API is unreachable
-      });
+      .catch(() => {});
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+
+    const query =
+      currentUser.role === 'tutor' && currentUser.isAdmin
+        ? '/api/questions'
+        : `/api/questions?student_email=${encodeURIComponent(currentUser.email)}`;
+
+    fetch(query)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data || !Array.isArray(data.questions)) return;
+        setQuestions(
+          (data.questions as Record<string, unknown>[]).map((q) =>
+            mapApiQuestion(q, courses)
+          )
+        );
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [currentUser, courses]);
 
   useEffect(() => {
     if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) return;
@@ -551,9 +607,7 @@ export default function App() {
           );
         }
       })
-      .catch(() => {
-        // Keep current state if backend API is unreachable
-      });
+      .catch(() => {});
 
     fetch('/api/tutor/workspace', { headers })
       .then((res) => (res.ok ? res.json() : null))
@@ -599,6 +653,13 @@ export default function App() {
             (data.word_game_scores as Record<string, unknown>[]).map(mapApiWordGameScore)
           );
         }
+        if (Array.isArray(data.questions)) {
+          setQuestions(
+            (data.questions as Record<string, unknown>[]).map((q) =>
+              mapApiQuestion(q, courses)
+            )
+          );
+        }
         if (Array.isArray(data.users) && data.users.length > 0) {
           setRegisteredUsers(data.users as UserProfile[]);
         }
@@ -608,9 +669,7 @@ export default function App() {
           );
         }
       })
-      .catch(() => {
-        // Keep current state if backend API is unreachable
-      });
+      .catch(() => {});
 
     return () => {
       active = false;
@@ -834,9 +893,7 @@ export default function App() {
           );
         }
       }
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   const handleCreateTutorAccount = async ({
@@ -891,9 +948,114 @@ export default function App() {
           );
         }
       }
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
+  };
+
+  const handleSaveCourse = async (courseInput: Omit<Course, 'id'> & { id?: string }) => {
+    if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) return;
+
+    const isEditing = Boolean(courseInput.id);
+    const slug = courseInput.languageName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    const courseId =
+      courseInput.id || `course-${slug || 'lang'}-${courseInput.audience}-${Date.now()}`;
+
+    const fallback = courses.find((c) => c.id === courseId);
+    const mapped: Course = mapApiCourse(
+      {
+        ...courseInput,
+        id: courseId,
+        per_session_price_kes: courseInput.perSessionPriceKes,
+        monthly_pass_price_kes: courseInput.monthlyPassPriceKes,
+        session_duration_minutes: courseInput.sessionDurationMinutes,
+        jitsi_room_name: courseInput.jitsiRoomName,
+        pdf_title: courseInput.pdfTitle,
+        tutor_uid: courseInput.tutorUid || currentUser.uid,
+        tutor_name: courseInput.tutorName || currentUser.fullName,
+        image_url: courseInput.imageUrl,
+        lessons_count: courseInput.lessonsCount,
+      },
+      fallback
+    );
+
+    setCourses((prev) => {
+      const exists = prev.some((c) => c.id === courseId);
+      if (exists) {
+        return prev.map((c) => (c.id === courseId ? mapped : c));
+      }
+      return [mapped, ...prev];
+    });
+
+    appendAuditLog({
+      actorEmail: currentUser.email,
+      actorRole: 'tutor_admin',
+      endpoint: isEditing ? `/api/tutor/courses/${courseId}` : '/api/tutor/courses',
+      action: isEditing ? 'COURSE_UPDATED' : 'COURSE_CREATED',
+      httpStatus: isEditing ? 200 : 201,
+      details: `${isEditing ? 'Updated' : 'Created'} course "${mapped.title}" (${mapped.id}).`,
+    });
+
+    try {
+      const res = await fetch(
+        isEditing ? `/api/tutor/courses/${encodeURIComponent(courseId)}` : '/api/tutor/courses',
+        {
+          method: isEditing ? 'PUT' : 'POST',
+          headers: tutorHeaders(),
+          body: JSON.stringify({
+            id: courseId,
+            title: mapped.title,
+            language_name: mapped.languageName,
+            category: mapped.category,
+            audience: mapped.audience,
+            session_duration_minutes: mapped.sessionDurationMinutes,
+            description: mapped.description,
+            level: mapped.level,
+            per_session_price_kes: mapped.perSessionPriceKes,
+            monthly_pass_price_kes: mapped.monthlyPassPriceKes,
+            jitsi_room_name: mapped.jitsiRoomName,
+            pdf_title: mapped.pdfTitle,
+            tutor_uid: mapped.tutorUid,
+            tutor_name: mapped.tutorName,
+            image_url: mapped.imageUrl,
+            lessons_count: mapped.lessonsCount,
+          }),
+        }
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        const rawCourse = (data?.course ?? data) as Record<string, unknown> | undefined;
+        if (rawCourse && (rawCourse.id || rawCourse.title)) {
+          const saved = mapApiCourse(rawCourse, mapped);
+          setCourses((prev) => prev.map((c) => (c.id === courseId ? saved : c)));
+        }
+      }
+    } catch {}
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) return;
+
+    const target = courses.find((c) => c.id === courseId);
+    setCourses((prev) => prev.filter((c) => c.id !== courseId));
+
+    appendAuditLog({
+      actorEmail: currentUser.email,
+      actorRole: 'tutor_admin',
+      endpoint: `/api/tutor/courses/${encodeURIComponent(courseId)}`,
+      action: 'COURSE_DELETED',
+      httpStatus: 200,
+      details: `Deleted course "${target?.title || courseId}" (${courseId}).`,
+    });
+
+    try {
+      await fetch(`/api/tutor/courses/${encodeURIComponent(courseId)}`, {
+        method: 'DELETE',
+        headers: tutorHeaders(),
+      });
+    } catch {}
   };
 
   const handleCompleteEnrollment = ({
@@ -980,9 +1142,7 @@ export default function App() {
         transaction_ref: transactionRef,
         preferred_slot: newEnrollment.preferredSlot,
       }),
-    }).catch(() => {
-      
-    });
+    }).catch(() => {});
   };
 
   const handleToggleReady = (enrollmentId: string) => {
@@ -1088,6 +1248,90 @@ export default function App() {
     ]);
   };
 
+  const handleAskQuestion = async ({
+    courseId,
+    languageName,
+    questionText,
+  }: {
+    courseId: string;
+    languageName: string;
+    questionText: string;
+  }) => {
+    if (!currentUser || currentUser.role !== 'student') return;
+    const tempId = `temp-q-${Date.now()}`;
+    const optimistic: CourseQuestion = {
+      id: tempId,
+      courseId,
+      languageName,
+      studentUid: currentUser.uid,
+      studentName: currentUser.fullName,
+      studentEmail: currentUser.email,
+      questionText,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+    };
+    setQuestions((prev) => [optimistic, ...prev]);
+
+    try {
+      const res = await fetch('/api/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          course_id: courseId,
+          language_name: languageName,
+          student_uid: currentUser.uid,
+          student_name: currentUser.fullName,
+          student_email: currentUser.email,
+          question_text: questionText,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.question) {
+          const saved = mapApiQuestion(data.question as Record<string, unknown>, courses);
+          setQuestions((prev) => prev.map((q) => (q.id === tempId ? saved : q)));
+        }
+      }
+    } catch {}
+  };
+
+  const handleReplyQuestion = async (questionId: string, tutorReply: string) => {
+    if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) return;
+    const nowIso = new Date().toISOString();
+    setQuestions((prev) =>
+      prev.map((q) =>
+        q.id === questionId
+          ? {
+              ...q,
+              tutorReply,
+              repliedByName: currentUser.fullName,
+              status: 'answered',
+              repliedAt: nowIso,
+            }
+          : q
+      )
+    );
+
+    try {
+      const res = await fetch('/api/tutor/questions/reply', {
+        method: 'POST',
+        headers: tutorHeaders(),
+        body: JSON.stringify({
+          question_id: questionId,
+          tutor_reply: tutorReply,
+          replied_by_name: currentUser.fullName,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.question) {
+          const saved = mapApiQuestion(data.question as Record<string, unknown>, courses);
+          setQuestions((prev) => prev.map((q) => (q.id === questionId ? saved : q)));
+        }
+      }
+    } catch {}
+  };
+
   const handleVerifyEnrollment = (enrollmentId: string, status: 'completed' | 'revoked') => {
     if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) return;
     setEnrollments((prev) =>
@@ -1135,12 +1379,20 @@ export default function App() {
         if (data.session) {
           const saved = mapApiLiveSession(data.session as Record<string, unknown>, courses);
           setLiveSessions((prev) =>
-            prev.map((s) => (s.id === tempId ? { ...saved, languageName: sessData.languageName, audience: sessData.audience, tutorName: sessData.tutorName } : s))
+            prev.map((s) =>
+              s.id === tempId
+                ? {
+                    ...saved,
+                    languageName: sessData.languageName,
+                    audience: sessData.audience,
+                    tutorName: sessData.tutorName,
+                  }
+                : s
+            )
           );
         }
       }
-    } catch {
-    }
+    } catch {}
   };
 
   const handleUpdateSessionStatus = async (
@@ -1162,9 +1414,7 @@ export default function App() {
         headers: tutorHeaders(),
         body: JSON.stringify({ session_id: sessionId, status }),
       });
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   const handleSendClassEmail = async (
@@ -1192,9 +1442,7 @@ export default function App() {
           class_time_info: emailData.classTimeInfo,
         }),
       });
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   const handleAddMaterial = async (mat: Omit<SharedMaterial, 'id' | 'createdAt'>) => {
@@ -1226,13 +1474,15 @@ export default function App() {
         if (data.material) {
           const saved = mapApiMaterial(data.material as Record<string, unknown>, courses);
           setMaterials((prev) =>
-            prev.map((m) => (m.id === tempId ? { ...saved, languageName: mat.languageName, tutorName: mat.tutorName } : m))
+            prev.map((m) =>
+              m.id === tempId
+                ? { ...saved, languageName: mat.languageName, tutorName: mat.tutorName }
+                : m
+            )
           );
         }
       }
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   const handleCreateTest = async (test: Omit<LanguageTest, 'id' | 'createdAt'>) => {
@@ -1266,9 +1516,7 @@ export default function App() {
           );
         }
       }
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   const handleFeedbackAudio = (submissionId: string, feedback: string) => {
@@ -1321,6 +1569,8 @@ export default function App() {
             tests={tests}
             testSubmissions={testSubmissions}
             audioSubmissions={audioSubmissions}
+            questions={questions}
+            onAskQuestion={handleAskQuestion}
             onEnrollCourse={handleRequestEnroll}
             onToggleReady={handleToggleReady}
             onToggleModuleComplete={handleToggleModuleComplete}
@@ -1354,6 +1604,10 @@ export default function App() {
             audioSubmissions={audioSubmissions}
             ratings={ratings}
             wordGameScores={wordGameScores}
+            questions={questions}
+            onReplyQuestion={handleReplyQuestion}
+            onSaveCourse={handleSaveCourse}
+            onDeleteCourse={handleDeleteCourse}
             onVerifyEnrollment={handleVerifyEnrollment}
             onAddOrUpdateLiveSession={handleAddOrUpdateLiveSession}
             onUpdateSessionStatus={handleUpdateSessionStatus}
@@ -1367,7 +1621,7 @@ export default function App() {
         )}
       </main>
 
-     {checkoutCourse && currentUser && currentUser.role === 'student' && (
+      {checkoutCourse && currentUser && currentUser.role === 'student' && (
         <CheckoutModal
           course={checkoutCourse}
           currentUser={currentUser}

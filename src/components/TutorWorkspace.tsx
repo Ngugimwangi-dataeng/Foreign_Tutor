@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   Course,
+  CourseQuestion,
   Enrollment,
   SharedMaterial,
   LanguageTest,
@@ -12,6 +13,7 @@ import {
   ClassEmailNotification,
   SecurityAuditLog,
 } from '../types';
+import { CourseQAChatbox } from './CourseQAChatbox';
 import { playAudioChime } from '../utils/audio';
 import {
   ShieldAlert,
@@ -31,6 +33,10 @@ import {
   Send,
   ShieldCheck,
   UserPlus,
+  BookOpen,
+  Trash2,
+  Pencil,
+  MessageSquare,
 } from 'lucide-react';
 
 interface TutorWorkspaceProps {
@@ -46,6 +52,10 @@ interface TutorWorkspaceProps {
   audioSubmissions: AudioSubmission[];
   ratings: TutorRating[];
   wordGameScores: WordGameScore[];
+  questions?: CourseQuestion[];
+  onReplyQuestion?: (questionId: string, tutorReply: string) => Promise<void> | void;
+  onSaveCourse?: (course: Omit<Course, 'id'> & { id?: string }) => Promise<void> | void;
+  onDeleteCourse?: (courseId: string) => Promise<void> | void;
   onVerifyEnrollment: (enrollmentId: string, status: 'completed' | 'revoked') => void;
   onAddOrUpdateLiveSession: (session: Omit<DailyLiveSession, 'id' | 'updatedAt'>) => void;
   onUpdateSessionStatus: (sessionId: string, status: DailyLiveSession['status']) => void;
@@ -62,6 +72,61 @@ interface TutorWorkspaceProps {
   }) => void;
 }
 
+type CourseFormState = {
+  id?: string;
+  title: string;
+  languageName: string;
+  category: 'kenyan' | 'foreign';
+  audience: 'adult' | 'children';
+  sessionDurationMinutes: 60 | 180;
+  level: string;
+  perSessionPriceKes: string;
+  monthlyPassPriceKes: string;
+  jitsiRoomName: string;
+  pdfTitle: string;
+  lessonsCount: string;
+  imageUrl: string;
+  description: string;
+};
+
+function createCourseFormState(audience: 'adult' | 'children' = 'adult'): CourseFormState {
+  return {
+    id: undefined,
+    title: '',
+    languageName: '',
+    category: 'kenyan',
+    audience,
+    sessionDurationMinutes: audience === 'children' ? 60 : 180,
+    level: 'Beginner to Intermediate',
+    perSessionPriceKes: audience === 'children' ? '1000' : '1500',
+    monthlyPassPriceKes: audience === 'children' ? '6400' : '9600',
+    jitsiRoomName: '',
+    pdfTitle: '',
+    lessonsCount: '10',
+    imageUrl: '',
+    description: '',
+  };
+}
+
+function editCourseToFormState(course: Course): CourseFormState {
+  return {
+    id: course.id,
+    title: course.title,
+    languageName: course.languageName,
+    category: course.category,
+    audience: course.audience,
+    sessionDurationMinutes: course.sessionDurationMinutes === 60 ? 60 : 180,
+    level: course.level,
+    perSessionPriceKes: String(course.perSessionPriceKes),
+    monthlyPassPriceKes: String(course.monthlyPassPriceKes),
+    jitsiRoomName: course.jitsiRoomName,
+    pdfTitle: course.pdfTitle,
+    lessonsCount: String(course.lessonsCount),
+    imageUrl: course.imageUrl,
+    description: course.description,
+  };
+}
+
 export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   currentUser,
   users,
@@ -75,6 +140,10 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   audioSubmissions,
   ratings,
   wordGameScores,
+  questions = [],
+  onReplyQuestion,
+  onSaveCourse,
+  onDeleteCourse,
   onVerifyEnrollment,
   onAddOrUpdateLiveSession,
   onUpdateSessionStatus,
@@ -86,10 +155,17 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   onCreateTutorAccount,
 }) => {
   const [section, setSection] = useState<
-    'students' | 'live_schedule' | 'reports' | 'materials' | 'tests' | 'feedback' | 'admin_security'
+    | 'students'
+    | 'courses'
+    | 'live_schedule'
+    | 'reports'
+    | 'materials'
+    | 'tests'
+    | 'qa'
+    | 'feedback'
+    | 'admin_security'
   >('students');
 
-  // Map courses & users by ID so schema-normalized lookups stay consistent
   const courseById = useMemo(() => {
     const map = new Map<string, Course>();
     courses.forEach((c) => map.set(c.id, c));
@@ -104,7 +180,14 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
 
   const defaultCourseId = courses[0]?.id || 'swahili-adult-101';
 
-  // Daily Live Session Form (matches live_sessions in schema.sql)
+  const [courseForm, setCourseForm] = useState<CourseFormState>(() =>
+    createCourseFormState('adult')
+  );
+  const [editingCourseObj, setEditingCourseObj] = useState<Course | null>(null);
+  const [courseSearch, setCourseSearch] = useState('');
+  const [courseNotice, setCourseNotice] = useState<string | null>(null);
+  const [courseSaving, setCourseSaving] = useState(false);
+
   const todayStr = new Date().toISOString().slice(0, 10);
   const [sessCourseId, setSessCourseId] = useState(defaultCourseId);
   const [sessDate, setSessDate] = useState(todayStr);
@@ -113,7 +196,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const [sessTopic, setSessTopic] = useState('');
   const [sessNotice, setSessNotice] = useState<string | null>(null);
 
-  // Email Student Class-Time Update Panel (matches class_email_notifications in schema.sql)
   const [emailTarget, setEmailTarget] = useState<Enrollment | 'all_course' | null>(null);
   const [emailCourseId, setEmailCourseId] = useState(defaultCourseId);
   const [emailSubject, setEmailSubject] = useState('');
@@ -121,10 +203,8 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const [emailBody, setEmailBody] = useState('');
   const [emailSentBanner, setEmailSentBanner] = useState<string | null>(null);
 
-  // Daily Transaction Reports Date Filter (aligns with daily_transaction_summary & enrollments)
   const [reportDateFilter, setReportDateFilter] = useState<string>('all');
 
-  // Material Sharing Form (matches shared_materials: pdf | audio | image)
   const [matCourseId, setMatCourseId] = useState(defaultCourseId);
   const [matType, setMatType] = useState<'image' | 'pdf' | 'audio'>('image');
   const [matTitle, setMatTitle] = useState('');
@@ -135,7 +215,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const [matFileName, setMatFileName] = useState('visual_explanation_card.jpg');
   const [matNotice, setMatNotice] = useState<string | null>(null);
 
-  // Test Creation Form (matches tests + test_questions in schema.sql)
   const [testCourseId, setTestCourseId] = useState(defaultCourseId);
   const [testTitle, setTestTitle] = useState('');
   const [qPrompt, setQPrompt] = useState('');
@@ -145,17 +224,14 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
   const [correctIdx, setCorrectIdx] = useState(0);
   const [testNotice, setTestNotice] = useState<string | null>(null);
 
-  // Audio feedback input (matches audio_submissions.tutor_feedback)
   const [audioNotes, setAudioNotes] = useState<Record<string, string>>({});
 
-  // Admin: Provision new Tutor/Admin state (matches users with role='tutor' and is_admin=TRUE)
   const [newTutorName, setNewTutorName] = useState('');
   const [newTutorEmail, setNewTutorEmail] = useState('');
   const [newTutorPass, setNewTutorPass] = useState('');
   const [newTutorPin, setNewTutorPin] = useState('');
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
 
-  // STRICT RBAC ENFORCEMENT — Tutor is also System Admin; students have zero access
   if (!currentUser || currentUser.role !== 'tutor' || !currentUser.isAdmin) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16">
@@ -170,7 +246,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             Students Have No Access to Tutor Tools
           </h1>
           <p className="text-sm text-[#52525B] max-w-md mx-auto">
-            For system and information security, only registered and authenticated tutors can view enrolled student lists, daily transaction reports, or live session controls.
+            Only authenticated tutors and administrators can access enrolled student records, transaction reports, or live session controls.
           </p>
         </div>
       </div>
@@ -197,6 +273,101 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
       modules: [],
     };
 
+  const resetCourseEditor = (audience: 'adult' | 'children' = 'adult') => {
+    setEditingCourseObj(null);
+    setCourseForm(createCourseFormState(audience));
+    setCourseNotice(null);
+  };
+
+  const handleEditCourseSelect = (course: Course) => {
+    setEditingCourseObj(course);
+    setCourseForm(editCourseToFormState(course));
+    setCourseNotice(`Editing "${course.title}" (${course.languageName}).`);
+  };
+
+  const handleCourseFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onSaveCourse || !courseForm.title.trim() || !courseForm.languageName.trim()) return;
+
+    const slug = courseForm.languageName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    const payload: Omit<Course, 'id'> & { id?: string } = {
+      id: courseForm.id,
+      title: courseForm.title.trim(),
+      languageName: courseForm.languageName.trim(),
+      category: courseForm.category,
+      audience: courseForm.audience,
+      sessionDurationMinutes:
+        courseForm.audience === 'children' ? 60 : courseForm.sessionDurationMinutes,
+      level: courseForm.level.trim() || 'Beginner to Intermediate',
+      perSessionPriceKes: Math.max(0, Number(courseForm.perSessionPriceKes) || 0),
+      monthlyPassPriceKes: Math.max(0, Number(courseForm.monthlyPassPriceKes) || 0),
+      jitsiRoomName:
+        courseForm.jitsiRoomName.trim() ||
+        `lughasmart-${slug || 'course'}-${courseForm.audience}`,
+      pdfTitle:
+        courseForm.pdfTitle.trim() ||
+        `${courseForm.languageName.trim()} Learner Workbook.pdf`,
+      lessonsCount: Math.max(1, Number(courseForm.lessonsCount) || 10),
+      imageUrl: courseForm.imageUrl.trim(),
+      description: courseForm.description.trim(),
+      tutorUid: editingCourseObj?.tutorUid || currentUser.uid,
+      tutorName: editingCourseObj?.tutorName || currentUser.fullName,
+      modules: editingCourseObj?.modules ?? [],
+    };
+
+    setCourseSaving(true);
+    try {
+      await onSaveCourse(payload);
+      playAudioChime('success');
+      setCourseNotice(
+        courseForm.id
+          ? `Updated course "${payload.title}" in the database.`
+          : `Added course "${payload.title}" to the database.`
+      );
+      if (!courseForm.id) {
+        setCourseForm(createCourseFormState(courseForm.audience));
+      }
+    } finally {
+      setCourseSaving(false);
+    }
+  };
+
+  const handleCourseDeleteClick = async (course: Course) => {
+    if (!onDeleteCourse) return;
+    const confirmed = window.confirm(
+      `Delete "${course.title}" (${course.languageName})? This will remove it from the catalog.`
+    );
+    if (!confirmed) return;
+
+    if (courseForm.id === course.id) {
+      resetCourseEditor(course.audience);
+    }
+    setCourseSaving(true);
+    try {
+      await onDeleteCourse(course.id);
+      playAudioChime('success');
+      setCourseNotice(`Deleted course "${course.title}".`);
+    } finally {
+      setCourseSaving(false);
+    }
+  };
+
+  const visibleCourses = courses.filter((c) => {
+    const q = courseSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      c.title.toLowerCase().includes(q) ||
+      c.languageName.toLowerCase().includes(q) ||
+      c.category.toLowerCase().includes(q) ||
+      c.audience.toLowerCase().includes(q)
+    );
+  });
+
   const handleVerifyEnrollmentAction = async (
     enrollmentId: string,
     status: 'completed' | 'revoked'
@@ -219,9 +390,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
               : 'Access revoked in TutorWorkspace.',
         }),
       });
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   const handleCreateLiveSession = (e: React.FormEvent) => {
@@ -314,7 +483,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
     setTimeout(() => setEmailSentBanner(null), 4000);
   };
 
-  // Daily Transaction Report calculations (aligns with completed enrollments in KES)
   const filteredTransactions = enrollments.filter((e) =>
     reportDateFilter === 'all' ? true : e.enrolledAt.startsWith(reportDateFilter)
   );
@@ -416,9 +584,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             notes: matDesc.trim() || matTitle.trim(),
           }),
         });
-      } catch {
-        // Fallback gracefully when running offline or without API server
-      }
+      } catch {}
     }
 
     setMatTitle('');
@@ -477,9 +643,7 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
           feedback_text: feedback,
         }),
       });
-    } catch {
-      // Fallback gracefully when running offline or without API server
-    }
+    } catch {}
   };
 
   return (
@@ -493,11 +657,17 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             Tutor & Admin Operations Console
           </h1>
           <p className="text-sm text-[#52525B] mt-1">
-            Manage daily live Jitsi sessions, email enrolled students with class times, audit daily transaction reports, and enforce platform security.
+            Manage courses, daily live Jitsi sessions, student Q&A, class-time emails, daily transaction reports, and platform security.
           </p>
         </div>
 
         <div className="flex items-center gap-6 text-xs shrink-0">
+          <div>
+            <div className="text-[#71717A]">Courses</div>
+            <div className="font-mono text-2xl font-semibold text-[#18181B] tabular-nums">
+              {courses.length}
+            </div>
+          </div>
           <div>
             <div className="text-[#71717A]">Enrolled Students</div>
             <div className="font-mono text-2xl font-semibold text-[#18181B] tabular-nums">
@@ -505,28 +675,23 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             </div>
           </div>
           <div>
-            <div className="text-[#71717A]">Daily Live Classes</div>
-            <div className="font-mono text-2xl font-semibold text-[#0F6B4B] tabular-nums">
-              {liveSessions.length}
-            </div>
-          </div>
-          <div>
             <div className="text-[#71717A]">Completed Revenue</div>
-            <div className="font-mono text-2xl font-semibold text-[#18181B] tabular-nums">
+            <div className="font-mono text-2xl font-semibold text-[#0F6B4B] tabular-nums">
               KES {totalRevenueKes.toLocaleString()}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Tutor Section Selector */}
       <div className="flex flex-wrap gap-1.5 p-1.5 bg-[#F3F2EE] border border-[#E5E3DC] rounded-xl w-fit">
         {[
           { id: 'students', label: 'Enrolled Students & Email', icon: Users },
+          { id: 'courses', label: `Courses (${courses.length})`, icon: BookOpen },
           { id: 'live_schedule', label: 'Daily Live Sessions', icon: Calendar },
           { id: 'reports', label: 'Daily Transaction Reports', icon: Receipt },
           { id: 'materials', label: 'Share Images, PDFs & Audio', icon: ImageIcon },
           { id: 'tests', label: 'Create & Share Tests', icon: ClipboardPlus },
+          { id: 'qa', label: `Student Q&A (${questions.length})`, icon: MessageSquare },
           { id: 'feedback', label: 'Audio Review & Ratings', icon: Star },
           { id: 'admin_security', label: 'Admin & Security', icon: ShieldCheck },
         ].map((tab) => {
@@ -554,7 +719,312 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 1: ENROLLED STUDENTS, MODULE COVERAGE & EMAIL CLASS TIME UPDATES */}
+      {section === 'courses' && (
+        <div className="space-y-6">
+          {courseNotice && (
+            <div className="p-3.5 rounded-xl bg-[#0F6B4B]/10 border border-[#0F6B4B]/30 text-xs text-[#0F6B4B] font-semibold">
+              {courseNotice}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <form
+              onSubmit={handleCourseFormSubmit}
+              className="lg:col-span-5 bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4 text-xs h-fit"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-xl font-semibold text-[#18181B]">
+                  {courseForm.id ? 'Edit Existing Course' : 'Add New Course'}
+                </h2>
+                {courseForm.id && (
+                  <button
+                    type="button"
+                    onClick={() => resetCourseEditor(courseForm.audience)}
+                    className="text-xs font-semibold text-[#0F6B4B] hover:underline cursor-pointer"
+                  >
+                    + New Course
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-medium text-[#3F3F46] mb-1">Course Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={courseForm.title}
+                  onChange={(e) => setCourseForm((f) => ({ ...f, title: e.target.value }))}
+                  placeholder="e.g. Conversational Kikuyu for Adults"
+                  className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Language Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={courseForm.languageName}
+                    onChange={(e) =>
+                      setCourseForm((f) => ({ ...f, languageName: e.target.value }))
+                    }
+                    placeholder="e.g. Kikuyu, Dholuo, French"
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Category</label>
+                  <select
+                    value={courseForm.category}
+                    onChange={(e) =>
+                      setCourseForm((f) => ({
+                        ...f,
+                        category: e.target.value === 'foreign' ? 'foreign' : 'kenyan',
+                      }))
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8] bg-white"
+                  >
+                    <option value="kenyan">Kenyan Local Language</option>
+                    <option value="foreign">Foreign / Global Language</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Audience</label>
+                  <select
+                    value={courseForm.audience}
+                    onChange={(e) => {
+                      const nextAud = e.target.value === 'children' ? 'children' : 'adult';
+                      setCourseForm((f) => ({
+                        ...f,
+                        audience: nextAud,
+                        sessionDurationMinutes: nextAud === 'children' ? 60 : 180,
+                      }));
+                    }}
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8] bg-white"
+                  >
+                    <option value="adult">Adult (3-Hr Live)</option>
+                    <option value="children">Children (1-Hr Interactive)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Level</label>
+                  <input
+                    type="text"
+                    value={courseForm.level}
+                    onChange={(e) => setCourseForm((f) => ({ ...f, level: e.target.value }))}
+                    placeholder="Beginner to Intermediate"
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">
+                    Per Session (KES)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={courseForm.perSessionPriceKes}
+                    onChange={(e) =>
+                      setCourseForm((f) => ({ ...f, perSessionPriceKes: e.target.value }))
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8] font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">
+                    Monthly Pass (KES)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={courseForm.monthlyPassPriceKes}
+                    onChange={(e) =>
+                      setCourseForm((f) => ({ ...f, monthlyPassPriceKes: e.target.value }))
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8] font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Lessons</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={courseForm.lessonsCount}
+                    onChange={(e) =>
+                      setCourseForm((f) => ({ ...f, lessonsCount: e.target.value }))
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8] font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Jitsi Room Name</label>
+                  <input
+                    type="text"
+                    value={courseForm.jitsiRoomName}
+                    onChange={(e) =>
+                      setCourseForm((f) => ({ ...f, jitsiRoomName: e.target.value }))
+                    }
+                    placeholder="Auto-generated if blank"
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8] font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-[#3F3F46] mb-1">Image URL</label>
+                  <input
+                    type="text"
+                    value={courseForm.imageUrl}
+                    onChange={(e) => setCourseForm((f) => ({ ...f, imageUrl: e.target.value }))}
+                    placeholder="https://... or /images/..."
+                    className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-medium text-[#3F3F46] mb-1">Workbook / PDF Title</label>
+                <input
+                  type="text"
+                  value={courseForm.pdfTitle}
+                  onChange={(e) => setCourseForm((f) => ({ ...f, pdfTitle: e.target.value }))}
+                  placeholder="e.g. Kikuyu_Learner_Guide.pdf"
+                  className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-[#3F3F46] mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  value={courseForm.description}
+                  onChange={(e) => setCourseForm((f) => ({ ...f, description: e.target.value }))}
+                  placeholder="Course objectives, topics, and schedule details..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-[#D4D4D8]"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={courseSaving || !onSaveCourse}
+                  className="flex-1 py-2.5 bg-[#0F6B4B] hover:bg-[#0B533A] text-white font-semibold rounded-xl disabled:opacity-50 cursor-pointer"
+                >
+                  {courseSaving
+                    ? 'Saving...'
+                    : courseForm.id
+                    ? 'Save Course Changes'
+                    : 'Add Course to Database'}
+                </button>
+                {courseForm.id && (
+                  <button
+                    type="button"
+                    onClick={() => resetCourseEditor(courseForm.audience)}
+                    className="px-4 py-2.5 border border-[#E5E3DC] hover:bg-[#F3F2EE] text-[#3F3F46] font-medium rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+
+            <div className="lg:col-span-7 bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E5E3DC]">
+                <div>
+                  <h3 className="font-display text-xl font-semibold text-[#18181B]">
+                    Database Courses ({visibleCourses.length})
+                  </h3>
+                  <p className="text-xs text-[#52525B]">
+                    Click Edit to load any course into the form or Delete to remove unneeded courses.
+                  </p>
+                </div>
+                <input
+                  type="text"
+                  value={courseSearch}
+                  onChange={(e) => setCourseSearch(e.target.value)}
+                  placeholder="Search title or language..."
+                  className="px-3 py-2 rounded-xl border border-[#D4D4D8] text-xs w-full sm:w-56"
+                />
+              </div>
+
+              <div className="divide-y divide-[#E5E3DC]">
+                {visibleCourses.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-[#71717A]">
+                    No courses match your search filter.
+                  </p>
+                ) : (
+                  visibleCourses.map((c) => {
+                    const isSelected = courseForm.id === c.id;
+                    return (
+                      <div
+                        key={c.id}
+                        className={`py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs ${
+                          isSelected ? 'bg-[#0F6B4B]/5 -mx-3 px-3 rounded-xl' : ''
+                        }`}
+                      >
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-sm text-[#18181B]">
+                              {c.title}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-[#F3F2EE] text-[#3F3F46] font-medium">
+                              {c.languageName}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-[#0F6B4B]/10 text-[#0F6B4B] font-semibold">
+                              {c.audience === 'adult' ? 'Adult 3-Hr' : 'Children 1-Hr'}
+                            </span>
+                          </div>
+                          {c.description && (
+                            <p className="text-[#52525B] line-clamp-2">{c.description}</p>
+                          )}
+                          <div className="font-mono text-[11px] text-[#71717A]">
+                            Session: KES {c.perSessionPriceKes.toLocaleString()} · Monthly: KES{' '}
+                            {c.monthlyPassPriceKes.toLocaleString()} · {c.lessonsCount} lessons
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleEditCourseSelect(c)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-[#E5E3DC] hover:bg-[#F3F2EE] text-[#18181B] rounded-lg font-semibold cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-[#0F6B4B]" />
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={courseSaving || !onDeleteCourse}
+                            onClick={() => handleCourseDeleteClick(c)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-600 rounded-lg font-semibold disabled:opacity-50 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {section === 'students' && (
         <div className="space-y-6">
           <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4">
@@ -688,7 +1158,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             </div>
           </div>
 
-          {/* Email Composer Drawer / Panel */}
           {emailTarget && (
             <form
               onSubmit={handleDispatchEmail}
@@ -768,7 +1237,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             </form>
           )}
 
-          {/* Sent Email History */}
           <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-3">
             <h3 className="font-display text-lg font-semibold text-[#18181B]">
               Recent Class-Time Emails Sent ({emailNotifications.length})
@@ -794,7 +1262,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 2: DAILY LIVE SESSIONS MANAGER */}
       {section === 'live_schedule' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           <form
@@ -938,7 +1405,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 3: DAILY TRANSACTION REPORTS */}
       {section === 'reports' && (
         <div className="space-y-6">
           <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-6">
@@ -1067,7 +1533,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 4: SHARE IMAGES, UPLOAD PDFS & AUDIO */}
       {section === 'materials' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           <form
@@ -1194,7 +1659,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 5: CREATE & SHARE TESTS */}
       {section === 'tests' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           <form
@@ -1331,7 +1795,16 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 6: AUDIO PRONUNCIATION REVIEW & SATISFACTION RATINGS */}
+      {section === 'qa' && (
+        <CourseQAChatbox
+          mode="tutor"
+          currentUser={currentUser}
+          courses={courses}
+          questions={questions}
+          onReplyQuestion={onReplyQuestion}
+        />
+      )}
+
       {section === 'feedback' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4">
@@ -1407,11 +1880,9 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
         </div>
       )}
 
-      {/* SECTION 7: SYSTEM ADMIN, USER ACCESS & SECURITY AUDIT LOG */}
       {section === 'admin_security' && (
         <div className="space-y-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Provision New Tutor/Admin (Admin Only) */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1510,7 +1981,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
               </button>
             </form>
 
-            {/* User Directory & Suspension Control */}
             <div className="lg:col-span-7 bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4">
               <div>
                 <h2 className="font-display text-xl font-semibold text-[#18181B]">
@@ -1576,7 +2046,6 @@ export const TutorWorkspace: React.FC<TutorWorkspaceProps> = ({
             </div>
           </div>
 
-          {/* Security Audit Log */}
           <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div>
