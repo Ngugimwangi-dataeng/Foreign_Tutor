@@ -189,3 +189,18 @@ export interface WordGameScore {
   pairsMatched: number;
   playedAt: string;
 }
+
+export interface CourseQuestion {
+  id: string;
+  courseId: string;
+  languageName: string;
+  studentUid: string;
+  studentName: string;
+  studentEmail: string;
+  questionText: string;
+  tutorReply?: string | null;
+  repliedByName?: string | null;
+  status: 'open' | 'answered';
+  createdAt: string;
+  repliedAt?: string | null;
+}

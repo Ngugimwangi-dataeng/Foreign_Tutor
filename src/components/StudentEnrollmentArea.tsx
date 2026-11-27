@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Course,
+  CourseQuestion,
   Enrollment,
   SharedMaterial,
   LanguageTest,
@@ -19,6 +20,7 @@ import culturalBridgeImg from '../assets/images/kenyan_foreign_cultural_bridge_1
 import heroBannerImg from '../assets/images/lughasmart_hero_banner_1794473845041.jpg';
 import tutorAminaAvatarImg from '../assets/images/tutor_amina_avatar_1794473845671.jpg';
 import { WordGame } from './WordGame';
+import { CourseQAChatbox } from './CourseQAChatbox';
 import { speakPhrase, playAudioChime } from '../utils/audio';
 import {
   Video,
@@ -36,6 +38,7 @@ import {
   Sparkles,
   Mail,
   Calendar,
+  MessageSquare,
 } from 'lucide-react';
 
 const MATERIAL_IMAGE_BY_FILENAME: Record<string, string> = {
@@ -75,6 +78,12 @@ interface StudentEnrollmentAreaProps {
   tests: LanguageTest[];
   testSubmissions: TestSubmission[];
   audioSubmissions: AudioSubmission[];
+  questions: CourseQuestion[];
+  onAskQuestion: (params: {
+    courseId: string;
+    languageName: string;
+    questionText: string;
+  }) => Promise<void> | void;
   onEnrollCourse: (course: Course) => void;
   onToggleReady: (enrollmentId: string) => void;
   onToggleModuleComplete: (enrollmentId: string, moduleId: string) => void;
@@ -94,6 +103,8 @@ export const StudentEnrollmentArea: React.FC<StudentEnrollmentAreaProps> = ({
   tests,
   testSubmissions,
   audioSubmissions,
+  questions,
+  onAskQuestion,
   onEnrollCourse,
   onToggleReady,
   onToggleModuleComplete,
@@ -103,7 +114,7 @@ export const StudentEnrollmentArea: React.FC<StudentEnrollmentAreaProps> = ({
   onSaveWordGameScore,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'classes' | 'materials' | 'audio' | 'games' | 'tests' | 'rate'
+    'classes' | 'materials' | 'audio' | 'games' | 'tests' | 'qa' | 'rate'
   >('classes');
   const [embeddedJitsiUrl, setEmbeddedJitsiUrl] = useState<string | null>(null);
   const [recordingPhrase, setRecordingPhrase] = useState('Hujambo! Habari gani leo?');
@@ -229,6 +240,7 @@ export const StudentEnrollmentArea: React.FC<StudentEnrollmentAreaProps> = ({
           { id: 'audio', label: 'Catch-Up Audio & Voice', icon: Headphones },
           { id: 'games', label: 'Kids Word Games', icon: Gamepad2 },
           { id: 'tests', label: 'Tests & Scores', icon: ClipboardCheck },
+          { id: 'qa', label: 'Ask Tutor Q&A', icon: MessageSquare },
           { id: 'rate', label: 'Rate Tutor', icon: Star },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -791,10 +803,21 @@ export const StudentEnrollmentArea: React.FC<StudentEnrollmentAreaProps> = ({
               )}
             </div>
           )}
+
+          {/* TAB 6: STUDENT Q&A CHATBOX */}
+          {activeTab === 'qa' && (
+            <CourseQAChatbox
+              mode="student"
+              currentUser={currentUser}
+              courses={courses.filter((c) => enrolledCourseIds.has(c.id))}
+              questions={questions}
+              onAskQuestion={onAskQuestion}
+            />
+          )}
         </>
       )}
 
-      {/* TAB 6: RATE TUTOR & SATISFACTION */}
+      {/* TAB 7: RATE TUTOR & SATISFACTION */}
       {activeTab === 'rate' && (
         <div className="max-w-2xl bg-white border border-[#E5E3DC] rounded-2xl p-6 sm:p-8 space-y-5">
           <div>

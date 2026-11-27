@@ -249,6 +249,29 @@ FROM enrollments
 GROUP BY DATE(enrolled_at AT TIME ZONE 'Africa/Nairobi')
 ORDER BY transaction_date DESC;
 
+
+
+
+
+
+
+CREATE TABLE IF NOT EXISTS course_questions (
+  id TEXT PRIMARY KEY,
+  course_id TEXT NOT NULL,
+  language_name TEXT NOT NULL DEFAULT '',
+  student_uid TEXT NOT NULL,
+  student_name TEXT NOT NULL,
+  student_email TEXT NOT NULL DEFAULT '',
+  question_text TEXT NOT NULL,
+  tutor_reply TEXT DEFAULT '',
+  replied_by TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open', -- 'open' | 'answered'
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  replied_at TIMESTAMPTZ
+);
+
+
+
 -- ============================================================================
 -- SEED SAMPLE COURSES (IDEMPOTENT)
 -- ============================================================================
@@ -340,3 +363,7 @@ INSERT INTO courses (
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;
+
+
+CREATE INDEX IF NOT EXISTS idx_course_questions_course_id ON course_questions(course_id);
+CREATE INDEX IF NOT EXISTS idx_course_questions_student_uid ON course_questions(student_uid);
